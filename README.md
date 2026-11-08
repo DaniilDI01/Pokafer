@@ -22,7 +22,9 @@ pip install -e ".[dev]"
 pytest -q                                  # все тесты
 python scripts/demo_cli.py                 # сыграть руку против мозга в терминале
 python scripts/serve_brain.py              # HTTP-сервис на 127.0.0.1:8000
+python scripts/serve_table.py              # веб-стол в браузере: http://127.0.0.1:8010
 python scripts/train_kuhn.py               # CFR считает равновесие Куна (блеф включён)
+python scripts/arena.py --a micro --b fish # матч стратегий, bb/100
 ```
 
 ## С каким JSON работает мозг
@@ -113,7 +115,7 @@ curl -s localhost:8000/v1/decide -H 'Content-Type: application/json' \
 ## ROADMAP
 
 1. GTO-блюпринт: MCCFR на абстракции NLHE (OpenSpiel, CPU/кластер).
-2. Веб-стол: WebSocket-сервер + браузерный клиент (демо заказчикам).
+2. ~~Веб-стол: WebSocket-сервер + браузерный клиент~~ ✅ готов (`scripts/serve_table.py`).
 3. Слой оппонента: обучение на собранных снапшотах, эксплойт-контроллер.
 4. GTO-оракул (TexasSolver) для метрик отклонений людей от равновесия.
 5. Slumbot-адаптер для внешнего бенчмарка.
