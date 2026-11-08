@@ -40,9 +40,16 @@ def test_hand_completes_and_new_hand():
             assert result["kind"] in ("showdown", "fold_win")
 
             ws.send_json({"type": "new_hand"})
-            view2 = _recv_until(ws, "view")
+            # после итога сервер шлёт финальный view старой руки (обновление стеков) —
+            # ждём именно view новой руки
+            view2 = None
+            for _ in range(200):
+                msg = ws.receive_json()
+                if msg["type"] == "view" and not msg["hand_over"]:
+                    view2 = msg
+                    break
+            assert view2 is not None, "не дождались view новой руки"
             assert view2["hand_no"] == 2
-            assert view2["hand_over"] is False
 
 
 def test_illegal_action_returns_error_not_crash():
