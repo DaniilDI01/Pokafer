@@ -165,8 +165,19 @@ def render(snap: Snapshot, legal: list) -> None:
     print("   " + paint(" | ".join(parts), YELLOW))
 
 
+def ask(prompt: str) -> str:
+    """input() с аккуратным выходом по EOF (Ctrl+D) / Ctrl+C."""
+    try:
+        return input(prompt)
+    except (EOFError, KeyboardInterrupt):
+        print("\n— ввод закрыт, выход —")
+        sys.exit(0)
+
+
 def parse_user_cmd(cmd: str, legal: list) -> tuple[str, float | None]:
     toks = cmd.split()
+    if not toks:
+        raise ValueError(f"пустой ввод. {HELP_TXT}")
     base = toks[0]
     if base in ("f", "fold"):
         return "fold", None
@@ -177,6 +188,12 @@ def parse_user_cmd(cmd: str, legal: list) -> tuple[str, float | None]:
             raise ValueError("укажите сумму: b 6")
         amount = float(toks[1].replace(",", "."))
         verb = "bet" if any(l.action == "bet" for l in legal) else "raise"
+        lo = min(l.amount_to for l in legal if l.action == verb)
+        hi = max(l.amount_to for l in legal if l.action == verb)
+        if amount < lo:
+            raise ValueError(f"ниже мин-рейза: минимум {lo:g} (b {lo:g})")
+        if amount > hi:
+            raise ValueError(f"выше олл-ина: максимум {hi:g} (a)")
         return verb, amount
     if base in ("a", "allin"):
         br = [l for l in legal if l.action in ("bet", "raise")]
@@ -226,7 +243,7 @@ def play_hand(args, brain: Brain | None, stacks: dict[int, float], button: int, 
             render(snap, legal)
             while True:
                 try:
-                    cmd = input(paint("▶ ", BOLD)).strip()
+                    cmd = ask(paint("▶ ", BOLD)).strip()
                     if cmd in ("q", "quit", "exit"):
                         sys.exit(0)
                     if cmd in ("h", "help", "?"):
@@ -291,7 +308,7 @@ def main() -> None:
         header = f" РУКА #{hand_no} · кнопка: {NAMES[button]} · счёт {stacks[HERO]:g} : {stacks[VILLAIN]:g} "
         print("\n" + paint(f"═══════{header}═══════", BOLD))
         stacks = play_hand(args, brain, stacks, button, hand_no)
-        if input("Ещё руку? (Enter — да, q — выход): ").strip().lower() in ("q", "n", "н"):
+        if ask("Ещё руку? (Enter — да, q — выход): ").strip().lower() in ("q", "n", "н"):
             break
     print(f"Итог сессии: Вы {stacks[HERO]:g} — Мозг {stacks[VILLAIN]:g}")
 

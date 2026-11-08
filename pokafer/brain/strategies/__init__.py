@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 from pokafer.brain.strategies.base import Strategy
+from pokafer.brain.strategies.fish import FishStrategy
 from pokafer.brain.strategies.heuristic import HeuristicStrategy
+from pokafer.brain.strategies.micro import MicroExploitStrategy
 from pokafer.brain.strategies.random_strategy import RandomStrategy
 
 _REGISTRY: dict[str, type[Strategy]] = {}
@@ -27,5 +29,5 @@ def get(name: str, **kwargs) -> Strategy:
     return _INSTANCES[key]
 
 
-for _cls in (RandomStrategy, HeuristicStrategy):
+for _cls in (RandomStrategy, HeuristicStrategy, FishStrategy, MicroExploitStrategy):
     register(_cls)

@@ -1,13 +1,13 @@
 """Эвристическая стратегия: недо-GTO бейзлайн, который уже:
 
   - играет смешанно (те же решения в одной ситуации -> разные действия);
-  - блефует с осмысленной частотой (чем ниже сила руки и позже позиция,
-    тем чаще пробный блеф; на ривере — второй баррель с меньшей частотой);
+  - блефует с осмысленной частотой (ниже сила руки и позже позиция — чаще пробный
+    блеф; на ривере — второй баррель с меньшей частотой);
   - полублефует с дро (флеш-дро/стрит-дро повышают агрессию);
   - считает пот-оддсы для коллов.
 
-Это «живой» соперник для демо и точка отсчёта: GTO-блюпринт и нейросеть
-будут менять ровно этот модуль, не трогая остальную систему.
+PARAMS вынесены в словарь, чтобы наследники (например, MicroExploitStrategy)
+меняли политику без дублирования кода.
 """
 from __future__ import annotations
 
@@ -89,6 +89,27 @@ class HeuristicStrategy(Strategy):
     name: ClassVar[str] = "heuristic"
     label: ClassVar[str] = "эвристика с блефом и пот-оддсами"
 
+    # Единая политика; наследники переопределяют подмножество ключей.
+    PARAMS: ClassVar[dict] = {
+        # своя игра (некому уравнивать)
+        "bet_hi_thr": 0.80, "bet_hi_p": 0.80,   # велью большое
+        "bet_mid_thr": 0.60, "bet_mid_p": 0.65,  # велью среднее
+        "bet_low_thr": 0.40, "bet_low_p": 0.15,  # тонкая защита
+        "bluff_base": 0.20,      # базовый блеф
+        "bluff_late": 0.10,      # бонус поздней позиции
+        "bluff_draw": 0.08,      # бонус дро
+        "bluff_cap": 0.35,
+        "river_barrel_mult": 0.6,  # второй баррель осторожнее
+        "size_bias": 0,           # сдвиг по меню сайзингов (-1..+1)
+        # против ставки
+        "raise_thr": 0.85, "raise_p": 0.45,
+        "call_thr": 0.60, "call_p": 0.80,
+        "marg_call_p": 0.65,      # колл по оддсам
+        "fold_p": 0.82,           # без силы
+        "bluffcatch_p": 0.16,     # блеф-катч
+        "semibluff_raise_p": 0.02,
+    }
+
     def __init__(self, rng: random.Random | None = None):
         self.rng = rng or random.Random()
         self._last_note = ""
@@ -96,6 +117,7 @@ class HeuristicStrategy(Strategy):
     def distribution(
         self, snap: Snapshot, legal: list[LegalAction]
     ) -> dict[str, float]:
+        p = self.PARAMS
         by_key = {la.key: la for la in legal}
         s, note = hand_strength(snap)
         self._last_note = note
@@ -111,39 +133,40 @@ class HeuristicStrategy(Strategy):
         dist: dict[str, float] = {}
 
         if to_call <= 1e-9:
-            # некому уравнивать: чек / ставка
-            if s >= 0.80:
-                dist[self._pick_sizing(bets, 2)] = 0.80
-                dist["check"] = 0.20
-            elif s >= 0.60:
-                dist[self._pick_sizing(bets, 1)] = 0.65
-                dist["check"] = 0.35
-            elif s >= 0.40:
-                dist[self._pick_sizing(bets, 0)] = 0.15
-                dist["check"] = 0.85
+            if s >= p["bet_hi_thr"]:
+                dist[self._pick_sizing(bets, 2)] = p["bet_hi_p"]
+                dist["check"] = 1.0 - p["bet_hi_p"]
+            elif s >= p["bet_mid_thr"]:
+                dist[self._pick_sizing(bets, 1)] = p["bet_mid_p"]
+                dist["check"] = 1.0 - p["bet_mid_p"]
+            elif s >= p["bet_low_thr"]:
+                dist[self._pick_sizing(bets, 0)] = p["bet_low_p"]
+                dist["check"] = 1.0 - p["bet_low_p"]
             else:
-                bluff = 0.20 + (0.10 if late else 0.0) + (0.08 if "дро" in note else 0.0)
-                bluff *= 0.6 if river else 1.0  # второй баррель осторожнее
-                dist[self._pick_sizing(bets, 1 if not river else 0)] = min(0.35, bluff)
-                dist["check"] = 1.0 - min(0.35, bluff)
+                bluff = p["bluff_base"] + (p["bluff_late"] if late else 0.0)
+                if "дро" in note:
+                    bluff += p["bluff_draw"]
+                bluff *= p["river_barrel_mult"] if river else 1.0
+                bluff = min(p["bluff_cap"], bluff)
+                dist[self._pick_sizing(bets, 0 if river else 1)] = bluff
+                dist["check"] = 1.0 - bluff
         else:
             odds = to_call / (snap.pot + to_call)
             s_eff = s + self.rng.uniform(-0.06, 0.06)
-            if s_eff >= 0.85 and bets:
+            if s_eff >= p["raise_thr"] and bets:
                 r = self._pick_sizing(bets, 2)
-                dist[r], dist[call_key] = 0.45, 0.55
-            elif s_eff >= 0.60:
-                dist[call_key] = 0.80
-                dist["fold"] = 0.20
+                dist[r], dist[call_key] = p["raise_p"], 1.0 - p["raise_p"]
+            elif s_eff >= p["call_thr"]:
+                dist[call_key] = p["call_p"]
+                dist["fold"] = 1.0 - p["call_p"]
             elif s_eff >= max(odds + 0.05, 0.35):
-                dist[call_key] = 0.65
-                dist["fold"] = 0.35
+                dist[call_key] = p["marg_call_p"]
+                dist["fold"] = 1.0 - p["marg_call_p"]
             else:
-                # блеф-катч с малой частотой + изредка блеф-рейз
-                dist["fold"] = 0.82
-                dist[call_key] = 0.16
+                dist["fold"] = p["fold_p"]
+                dist[call_key] = p["bluffcatch_p"]
                 if bets and not river and "дро" in note:
-                    dist[self._pick_sizing(bets, 1)] = 0.02
+                    dist[self._pick_sizing(bets, 1)] = p["semibluff_raise_p"]
 
         dist = {k: v for k, v in dist.items() if k in by_key}
         return normalize(dist) if dist else normalize({la.key: 1.0 for la in legal})
@@ -153,13 +176,15 @@ class HeuristicStrategy(Strategy):
         return f"{self._last_note}; топ-действие {top[0]} ({top[1]:.0%})"
 
     def _pick_sizing(self, bets: list[LegalAction], tier: int) -> str:
-        """tier: 0=min, 1=средний, 2=максимальный из меню."""
+        """tier: 0=min, 1=средний, 2=максимальный из меню (с рандомизацией ±1)."""
         if not bets:
             return "check"
-        i = min(len(bets) - 1, max(0, tier + self.rng.choice((-1, 0, 1))))
+        i = min(
+            len(bets) - 1,
+            max(0, tier + self.PARAMS["size_bias"] + self.rng.choice((-1, 0, 1))),
+        )
         return bets[i].key
 
     @staticmethod
     def _is_late_position(snap: Snapshot) -> bool:
-        """Поздняя позиция = actor за кнопкой или это кнопка (упрощённо)."""
         return snap.actor_seat == snap.button_seat
