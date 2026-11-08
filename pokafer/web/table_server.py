@@ -221,8 +221,7 @@ class TableSession:
 
 
 def create_table_app(default_strategy: str = "heuristic",
-                     bot_think_sec: float = 0.5,
-                     auto_next_sec: float = 5.0) -> FastAPI:
+                     bot_think_sec: float = 0.5) -> FastAPI:
     app = FastAPI(title="Pokafer Web Table")
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
@@ -238,29 +237,9 @@ def create_table_app(default_strategy: str = "heuristic",
     async def table(ws: WebSocket, strategy: str = default_strategy, seed: int | None = None):
         await ws.accept()
         session = TableSession(strategy=strategy, seed=seed)
-        auto_task: asyncio.Task | None = None
-
-        def cancel_auto() -> None:
-            nonlocal auto_task
-            if auto_task is not None:
-                auto_task.cancel()
-                auto_task = None
-
-        async def schedule_auto() -> None:
-            nonlocal auto_task
-            cancel_auto()
-
-            async def _auto() -> None:
-                await asyncio.sleep(auto_next_sec)
-                if session.engine.hand_over:
-                    session._start_hand()
-                    await ws.send_json(session.view())
-                    await advance_bot()
-
-            auto_task = asyncio.create_task(_auto())
 
         async def advance_bot() -> None:
-            """Доигрывает ходы ботов и закрывает раздачу (с автосдачей)."""
+            """Доигрывает ходы ботов; итог — клиент сам попросит новую руку."""
             while not session.engine.hand_over and session.engine.actor_seat != HERO:
                 await asyncio.sleep(bot_think_sec)
                 event = session.bot_step()
@@ -271,7 +250,6 @@ def create_table_app(default_strategy: str = "heuristic",
             if session.engine.hand_over:
                 await ws.send_json(session.finish_hand())
                 await ws.send_json(session.view())
-                await schedule_auto()
 
         try:
             await ws.send_json(session.view())
@@ -280,7 +258,6 @@ def create_table_app(default_strategy: str = "heuristic",
                 msg = await ws.receive_json()
                 mtype = msg.get("type")
                 if mtype == "action":
-                    cancel_auto()
                     try:
                         session.engine.apply(msg["action"], msg.get("amount"))
                     except (ValueError, KeyError, RuntimeError) as e:
@@ -289,13 +266,11 @@ def create_table_app(default_strategy: str = "heuristic",
                     await ws.send_json(session.view())
                     await advance_bot()
                 elif mtype == "new_hand":
-                    cancel_auto()
                     if session.engine.hand_over:
                         session._start_hand()
                     await ws.send_json(session.view())
                     await advance_bot()
                 elif mtype == "configure":
-                    cancel_auto()
                     try:
                         session.set_bots(msg.get("bots", []))
                         session._start_hand()
@@ -328,9 +303,6 @@ def create_table_app(default_strategy: str = "heuristic",
                         continue
                     await ws.send_json(session.view())
         except WebSocketDisconnect:
-            cancel_auto()
             return
-        finally:
-            cancel_auto()
 
     return app

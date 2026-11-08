@@ -30,6 +30,9 @@ let ws = null;
 let lastView = null;
 let botsCfg = [{ name: "Мозг", strategy: "heuristic" }];
 let strategiesList = {};
+let botActions = {};        // name -> последнее действие («колл 6», «чек», …)
+let prevHandNo = null;      // сброс действий на новой руке/улице
+let prevStreet = null;
 
 /* ---------- отрисовка ---------- */
 
@@ -92,13 +95,14 @@ function renderVillains(v) {
     if (v.to_act === b.seat && !v.hand_over) seat.classList.add("active");
     if (b.folded) seat.classList.add("folded");
     const reveal = Array.isArray(b.cards);
-    const cardsHtml = b.folded && !reveal ? "" : "";
+    const action = botActions[b.name] || (b.folded ? "фолд" : "");
     seat.innerHTML = `
       <div class="avatar">${BOT_AVATARS[(i + 1) % BOT_AVATARS.length]}</div>
       <div class="plate">
         <div class="name">${b.name}${b.is_button ? ' <span class="button-mark">D</span>' : ""}</div>
         <div class="stack">${Math.round(b.stack)}</div>
         ${b.strategy ? `<div class="strat">${b.strategy}</div>` : ""}
+        ${action ? `<div class="last-action">${action}</div>` : ""}
       </div>
       <div class="bet-chip">${b.bet > 0 ? Math.round(b.bet) : ""}</div>
     `;
@@ -119,26 +123,29 @@ function renderVillains(v) {
 function setActions(view) {
   const legal = view.legal || {};
   const myTurn = view.to_act === 1 && !view.hand_over;
-  // панель видна всегда: либо кнопки действий, либо «следующая рука»
-  els.nextFloat.classList.toggle("hidden", !view.hand_over);
-  els.foldBtn.style.display = myTurn && legal.fold ? "" : "none";
-  els.checkCallBtn.style.display = myTurn ? "" : "none";
   const hasRaise = myTurn && legal.raise && legal.raise.min != null;
-  document.querySelector(".raise-group").style.display = hasRaise ? "" : "none";
-  if (!myTurn) return;
 
-  els.foldBtn.disabled = !legal.fold;
-
-  if (legal.call !== null && legal.call !== undefined) {
-    els.checkCallBtn.textContent = `Колл ${legal.call}`;
-    els.checkCallBtn.dataset.act = "call";
-  } else {
-    els.checkCallBtn.textContent = "Чек";
-    els.checkCallBtn.dataset.act = "check";
+  // все кнопки всегда на месте: неактивные — серые и некликабельные
+  els.nextFloat.disabled = !view.hand_over;
+  els.foldBtn.disabled = !myTurn || !legal.fold;
+  els.checkCallBtn.disabled = !myTurn;
+  els.raiseBtn.disabled = !hasRaise;
+  els.raiseSlider.disabled = !hasRaise;
+  els.raiseInput.disabled = !hasRaise;
+  document.querySelectorAll(".presets button").forEach(
+    (b) => (b.disabled = !hasRaise)
+  );
+  if (myTurn) {
+    if (legal.call !== null && legal.call !== undefined) {
+      els.checkCallBtn.textContent = `Колл ${legal.call}`;
+      els.checkCallBtn.dataset.act = "call";
+    } else {
+      els.checkCallBtn.textContent = "Чек";
+      els.checkCallBtn.dataset.act = "check";
+    }
   }
-
-  const r = legal.raise;
   if (hasRaise) {
+    const r = legal.raise;
     els.raiseSlider.min = r.min; els.raiseSlider.max = r.max;
     els.raiseSlider.value = r.min;
     els.raiseInput.min = r.min; els.raiseInput.max = r.max;
@@ -161,6 +168,15 @@ function heroComboText(v) {
 }
 
 function renderView(v) {
+  // новая рука или новая улица — сбрасываем подписи действий ботов
+  if (v.hand_no !== prevHandNo) {
+    botActions = {};
+    prevHandNo = v.hand_no;
+    prevStreet = v.street;
+  } else if (v.street !== prevStreet) {
+    botActions = {};
+    prevStreet = v.street;
+  }
   lastView = v;
   renderCards(els.hCards, v.hero.cards, 0);
   renderVillains(v);
@@ -175,7 +191,7 @@ function renderView(v) {
   els.combo.textContent = heroComboText(v);
   if (!v.hand_over) els.resultStrip.classList.add("hidden");
   setActions(v);
-  els.status.textContent = v.hand_over ? "рука завершена — следующая сдаётся автоматически"
+  els.status.textContent = v.hand_over ? "рука завершена — жмите «Следующая рука»"
     : (v.to_act === 1 ? "ваш ход" : "боты думают…");
 }
 
@@ -221,7 +237,10 @@ function connect() {
   ws.onmessage = (ev) => {
     const msg = JSON.parse(ev.data);
     if (msg.type === "view") renderView(msg);
-    else if (msg.type === "bot") addLog(`${msg.name}: ${msg.ru}`, "bot", fmtDist(msg.dist));
+    else if (msg.type === "bot") {
+      botActions[msg.name] = msg.ru;  // подпись под ботом: действие + сумма
+      addLog(`${msg.name}: ${msg.ru}`, "bot", fmtDist(msg.dist));
+    }
     else if (msg.type === "result") showResult(msg);
     else if (msg.type === "hint") addLog(`💡 ${msg.ru}`, "hero", fmtDist(msg.dist));
     else if (msg.type === "error") { addLog(`⚠ ${msg.detail}`, "sys"); els.status.textContent = "ошибка ввода"; }
@@ -279,6 +298,7 @@ document.querySelectorAll(".presets button").forEach((b) => {
 
 els.hintBtn.onclick = () => send({ type: "hint" });
 els.nextFloat.onclick = () => {
+  if (!lastView || !lastView.hand_over) return;
   send({ type: "new_hand" });
   addLog("— новая рука —", "sys");
 };

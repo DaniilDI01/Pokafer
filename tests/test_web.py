@@ -74,13 +74,15 @@ def test_illegal_action_returns_error_not_crash():
             assert err["detail"]
 
 
-def test_auto_next_hand():
-    app = create_table_app("heuristic", bot_think_sec=0.0, auto_next_sec=0.3)
+def test_no_automatic_next_hand():
+    """Автосдачи нет: после итога новая рука приходит только по запросу."""
+    app = create_table_app("heuristic", bot_think_sec=0.0)
     with TestClient(app) as client:
         with client.websocket_connect("/ws/table") as ws:
             result = _play_hero_passively(ws)
             assert result["type"] == "result"
-            # ничего не шлём: следующая рука должна прийти сама
+            _recv_view(ws, finished=True)  # финальный view — и тишина до запроса
+            ws.send_json({"type": "new_hand"})
             view2 = _recv_view(ws, fresh=True)
             assert view2["hand_no"] == 2
 
