@@ -68,6 +68,7 @@ class TableSession:
             {"name": "Мозг", "strategy": strategy}
         ])
         self._seed = seed
+        self._reveal: dict[int, list[str]] = {}  # карты шоудауна — не прячем до след. руки
         self._start_hand()
 
     # ---------- конфигурация ----------
@@ -91,11 +92,13 @@ class TableSession:
             self.bot_strategy[i] = strategy
         self.stacks = {s: START_STACK for s in self.names}
         self.button = 0
+        self._reveal = {}
 
     def _start_hand(self) -> None:
         if min(self.stacks.values()) <= 0:
             self.stacks = {s: START_STACK for s in self.names}
         self.hand_no += 1
+        self._reveal = {}
         seats_order = sorted(self.names)
         if self.button in self.names:
             self.button = seats_order[(seats_order.index(self.button) + 1) % len(seats_order)]
@@ -151,7 +154,10 @@ class TableSession:
                     "seat": s.seat, "name": self.names[s.seat], "stack": s.stack,
                     "bet": s.bet_street, "invested": s.invested,
                     "folded": s.folded, "all_in": s.all_in,
-                    "cards": s.hole_cards,  # None, пока не шоудаун
+                    # до шоудауна — закрыты; после итога — раскрыты и не прячутся
+                    "cards": s.hole_cards or (
+                        self._reveal.get(s.seat) if e.hand_over else None
+                    ),
                     "strategy": self.bot_strategy.get(s.seat),
                     "is_button": self.button == s.seat,
                 }
@@ -196,6 +202,7 @@ class TableSession:
             return None
         res = e.result or {}
         self.stacks = {s: e.seats[s].stack for s in self.names}
+        self._reveal = {s: c for s, c in res.get("hole_cards", {}).items()}
         name_of = self.names
         return {
             "type": "result",

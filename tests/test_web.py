@@ -108,3 +108,7 @@ def test_configure_multi_bots_and_play():
             strategies = {b["strategy"] for b in final["bots"]}
             assert strategies == {"micro", "fish"}
             assert final["hero"]["name"] == "Вы"
+            if result["kind"] == "showdown":
+                # карты шоудауна не прячутся до следующей руки
+                assert any(isinstance(b["cards"], list) and b["cards"]
+                           for b in final["bots"])

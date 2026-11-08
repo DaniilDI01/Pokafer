@@ -119,12 +119,15 @@ function renderVillains(v) {
 function setActions(view) {
   const legal = view.legal || {};
   const myTurn = view.to_act === 1 && !view.hand_over;
-  els.actionbar.classList.toggle("hidden", !myTurn);
+  // панель видна всегда: либо кнопки действий, либо «следующая рука»
   els.nextFloat.classList.toggle("hidden", !view.hand_over);
+  els.foldBtn.style.display = myTurn && legal.fold ? "" : "none";
+  els.checkCallBtn.style.display = myTurn ? "" : "none";
+  const hasRaise = myTurn && legal.raise && legal.raise.min != null;
+  document.querySelector(".raise-group").style.display = hasRaise ? "" : "none";
   if (!myTurn) return;
 
   els.foldBtn.disabled = !legal.fold;
-  els.foldBtn.style.display = legal.fold ? "" : "none";
 
   if (legal.call !== null && legal.call !== undefined) {
     els.checkCallBtn.textContent = `Колл ${legal.call}`;
@@ -135,11 +138,6 @@ function setActions(view) {
   }
 
   const r = legal.raise;
-  const hasRaise = r && r.min != null;
-  els.raiseBtn.style.display = hasRaise ? "" : "none";
-  els.raiseSlider.style.display = hasRaise ? "" : "none";
-  els.raiseInput.style.display = hasRaise ? "" : "none";
-  document.querySelector(".presets").style.display = hasRaise ? "" : "none";
   if (hasRaise) {
     els.raiseSlider.min = r.min; els.raiseSlider.max = r.max;
     els.raiseSlider.value = r.min;
@@ -202,7 +200,14 @@ function showResult(r) {
 /* ---------- сеть ---------- */
 
 function send(obj) {
-  if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj));
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify(obj));
+    return true;
+  }
+  // обрыв связи: клик не должен пропадать молча
+  els.status.textContent = "⚠ нет соединения — действие не отправлено, повторите через секунду";
+  els.status.classList.add("bad");
+  return false;
 }
 
 function connect() {

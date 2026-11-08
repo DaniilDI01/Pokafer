@@ -53,8 +53,9 @@ main { display: flex; gap: 16px; padding: 16px; flex: 1; }
   background: radial-gradient(ellipse at center, var(--felt1) 0%, var(--felt2) 70%);
   border: 10px solid #232a38; border-radius: 46% / 38%;
   box-shadow: inset 0 0 60px rgba(0,0,0,.45), 0 10px 30px rgba(0,0,0,.5);
-  min-height: 460px; position: relative; padding: 18px 70px;
-  display: flex; flex-direction: column; justify-content: space-between;
+  min-height: 460px; position: relative; padding: 18px 90px;
+  /* villains вне потока (absolute) — центрируем пару middle+hero вручную */
+  display: flex; flex-direction: column; justify-content: center; gap: 30px;
 }
 
 /* места ботов: абсолютные позиции вокруг стола */
@@ -149,10 +150,6 @@ button.success { background: var(--green); }
 button.danger { background: var(--red); }
 button.big { font-size: 16px; padding: 12px 22px; }
 
-#nextHandFloat {
-  position: fixed; right: 22px; bottom: 44px; z-index: 10;
-  box-shadow: 0 8px 24px rgba(0,0,0,.5);
-}
 #nextHandFloat.hidden { display: none; }
 
 .raise-group { display: flex; align-items: center; gap: 8px; }
