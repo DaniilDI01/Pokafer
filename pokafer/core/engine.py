@@ -1,9 +1,7 @@
-"""Движок раздачи NLHE: источник Snapshot'ов для живой игры и тестов.
+"""Движок раздачи NLHE (2–6 игроков): источник Snapshot'ов для живой игры и тестов.
 
-Упрощения v1 (задокументированы):
-  - сайд-поты не рассчитываются (весь банк уходит лучшей руке) — для HU-демо
-    и поведенческого анализа не критично, отмечено в ROADMAP;
-  - анте не раздаётся (поле есть в схеме, поддержим позже).
+Поддерживает мультипот целиком: возврат непокрытых ставок, сайд-поты,
+сплит-поты. Анте не раздаётся (поле в схеме зарезервировано).
 """
 from __future__ import annotations
 
@@ -303,27 +301,83 @@ class HandEngine:
             "winners": [winner],
             "pot": pot,
             "amount": pot,
+            "winnings": {winner: pot},
         }
 
-    def _showdown(self) -> None:
-        pot = self._pot()
-        active = [s for s in self.seats.values() if s.active]
-        scored = {
-            s.seat: evaluate7(s.hole + self.board) for s in active
+    def _refund_uncalled(self) -> None:
+        """Возврат непокрытой части последней ставки (никто не уровнял)."""
+        inv = {s.seat: s.invested for s in self.seats.values() if s.invested > 1e-9}
+        if len(inv) < 2:
+            return
+        ordered = sorted(inv.values(), reverse=True)
+        if ordered[0] > ordered[1] + 1e-9:
+            top = max(inv, key=lambda c: inv[c])
+            refund = round(inv[top] - ordered[1], 4)
+            self.seats[top].stack += refund
+            self.seats[top].invested -= refund
+
+    def _side_pots(self) -> list[dict]:
+        """Банк по слоям ставок: [{amount, contenders}], сайд-поты при олл-инах."""
+        remaining = {
+            s.seat: s.invested for s in self.seats.values() if s.invested > 1e-9
         }
-        best = max(scored.values())
-        winners = [seat for seat, sc in scored.items() if sc == best]
-        share = round(pot / len(winners), 4)
-        for w in winners:
-            self.seats[w].stack += share
+        active = {s.seat for s in self.seats.values() if s.active}
+        pots: list[dict] = []
+        while any(v > 1e-9 for v in remaining.values()):
+            contributors = [c for c, v in remaining.items() if v > 1e-9]
+            step = min(remaining[c] for c in contributors)
+            amount = 0.0
+            for c in contributors:
+                take = min(step, remaining[c])
+                remaining[c] -= take
+                amount += take
+            contenders = [c for c in contributors if c in active]
+            if contenders:
+                if pots and pots[-1]["contenders"] == contenders:
+                    pots[-1]["amount"] = round(pots[-1]["amount"] + amount, 4)
+                else:
+                    pots.append({"amount": round(amount, 4), "contenders": contenders})
+            elif pots:
+                # слой, куда вложились только сбросившие — достаётся верхнему слою
+                pots[-1]["amount"] = round(pots[-1]["amount"] + amount, 4)
+            else:
+                pots.append({"amount": round(amount, 4), "contenders": sorted(active)})
+        return pots
+
+    def _showdown(self) -> None:
+        self._refund_uncalled()
+        pots = self._side_pots()
+        active = [s for s in self.seats.values() if s.active]
+        scored = {s.seat: evaluate7(s.hole + self.board) for s in active}
+        pot_total = self._pot()
+
+        winnings = {s.seat: 0.0 for s in self.seats.values()}
+        pot_winners: list[dict] = []
+        for layer in pots:
+            best = max(scored[c] for c in layer["contenders"])
+            layer_winners = [
+                c for c in layer["contenders"] if scored[c] == best
+            ]
+            share = round(layer["amount"] / len(layer_winners), 4)
+            for w in layer_winners:
+                winnings[w] += share
+                self.seats[w].stack += share
+            pot_winners.append({
+                "amount": layer["amount"],
+                "winners": layer_winners,
+            })
+
+        winners = [seat for seat, w in winnings.items() if w > 1e-9]
         self.street = "showdown"
         self.hand_over = True
         self._actor = None
         self.result = {
             "type": "showdown",
             "winners": winners,
-            "pot": pot,
-            "amount": share,
+            "pot": round(pot_total, 4),
+            "amount": round(max(winnings.values(), default=0.0), 4),
+            "winnings": {s: round(w, 4) for s, w in winnings.items() if w > 1e-9},
+            "pots": pot_winners,
             "scores": {seat: hand_name(sc) for seat, sc in scored.items()},
             "scores_ru": {seat: hand_name_ru(sc) for seat, sc in scored.items()},
             "hole_cards": {

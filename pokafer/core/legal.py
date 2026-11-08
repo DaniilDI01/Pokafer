@@ -59,15 +59,19 @@ def legal_actions(snap: Snapshot) -> list[LegalAction]:
                 max_bet * 2.5,
                 max_bet + pot_base + to_call,  # «рейз размером с банк»
             ]
-        raw.append(my_all_in_to)
         seen: list[float] = []
         for amt in sorted(raw):
             amt = round(min(max(amt, min_raise_to), my_all_in_to), 2)
             if amt <= max_bet + 1e-9:
                 continue
-            if all(abs(amt - x) > max(0.01, amt * 0.02) for x in seen):
+            if not seen or all(abs(amt - x) > max(0.01, amt * 0.02) for x in seen):
                 seen.append(amt)
                 out.append(LegalAction(verb, amt))
+        # олл-ин доступен всегда (даже если сумма близка к другой)
+        if my_all_in_to > max_bet + 1e-9 and (
+            not seen or my_all_in_to > seen[-1] + 1e-9
+        ):
+            out.append(LegalAction(verb, round(my_all_in_to, 2)))
     return out
 
 

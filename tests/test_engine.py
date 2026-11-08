@@ -74,3 +74,45 @@ def test_illegal_action_rejected():
         e.apply("raise", 3)       # ниже мин-рейза
     with pytest.raises(ValueError):
         e.apply("raise", 999999)  # выше олл-ина
+
+
+def test_uncalled_bet_refunded_hu_allin():
+    # SB с большим стеком рейзит, BB закрывает олл-ином меньше — излишек вернётся
+    e = HandEngine(
+        seat_stacks={1: 200.0, 2: 30.0}, names={1: "a", 2: "b"},
+        button_seat=1, seed=4,
+    )
+    e.apply("raise", 50)
+    e.apply("call")  # BB: олл-ин 30 (все 30, стек меньше ставки)
+    assert e.hand_over
+    res = e.result
+    assert res["type"] == "showdown"
+    # вложились по 30: короткий стек может выиграть максимум 60, не 80
+    assert res["pot"] == 60.0
+    assert e.seats[2].stack <= 30.0 + 60.0
+    assert abs(sum(s.stack for s in e.seats.values()) - 230.0) < 1e-6
+
+
+def test_three_way_side_pots():
+    # стеки 200/100/50, все вскрываются: главный банк 3x50, сайд 2x50
+    e = HandEngine(
+        seat_stacks={1: 200.0, 2: 100.0, 3: 50.0},
+        names={1: "a", 2: "b", 3: "c"},
+        button_seat=1, seed=8,
+    )
+    assert e.actor_seat == 1          # UTG (после BB на месте 3)
+    e.apply("raise", 50)              # a: 50
+    assert e.actor_seat == 2
+    e.apply("raise", 100)             # b: 100
+    assert e.actor_seat == 3
+    e.apply("call")                   # c: олл-ин 50
+    assert e.actor_seat == 1
+    e.apply("call")                   # a: 100
+    assert e.hand_over                # b и c олл-ин -> раздача до шоудауна
+    res = e.result
+    assert res["type"] == "showdown"
+    pots = sorted(p["amount"] for p in res["pots"])
+    assert pots == [100.0, 150.0]     # сайд 50*2 и главный 50*3, всего 250
+    assert abs(sum(s.stack for s in e.seats.values()) - 350.0) < 1e-6
+    # короткий стек выигрывает максимум главный банк: 50 + 150 = 200
+    assert e.seats[3].stack <= 200.0 + 1e-6

@@ -1,35 +1,35 @@
-/* Pokafer web table — клиент без сборки (vanilla JS). */
+/* Pokafer web table — клиент без сборки (vanilla JS), мультибот-стол. */
 "use strict";
 
-/* Любая ошибка скрипта становится видимой в статус-строке — не глотаем молча. */
 window.addEventListener("error", (e) => {
   const s = document.getElementById("status");
-  if (s) {
-    s.textContent = "JS-ошибка: " + e.message;
-    s.classList.add("bad");
-  }
+  if (s) { s.textContent = "JS-ошибка: " + e.message; s.classList.add("bad"); }
 });
 
 const SUITS = { s: "♠", h: "♥", d: "♦", c: "♣" };
 const RED = new Set(["h", "d"]);
+const BOT_AVATARS = ["🤖", "👾", "🐱", "🦊", "🧠"];
 
 const $ = (id) => document.getElementById(id);
 const els = {
   status: $("status"), log: $("log"),
   board: $("board"), pot: $("pot"), street: $("street"),
-  hStack: $("hStack"), vStack: $("vStack"), hBet: $("hBet"), vBet: $("vBet"),
-  hCards: $("hCards"), vCards: $("vCards"),
-  seatHero: $("seatHero"), seatVillain: $("seatVillain"), combo: $("combo"),
-  actionbar: $("actionbar"), newhandBar: $("newhandBar"),
+  hStack: $("hStack"), hBet: $("hBet"), hCards: $("hCards"),
+  seatHero: $("seatHero"), combo: $("combo"), heroBtn: $("heroBtn"),
+  villains: $("villains"),
+  actionbar: $("actionbar"),
   foldBtn: $("foldBtn"), checkCallBtn: $("checkCallBtn"),
   raiseBtn: $("raiseBtn"), raiseSlider: $("raiseSlider"), raiseInput: $("raiseInput"),
-  hintBtn: $("hintBtn"), strategy: $("strategy"),
-  newHandBtn: $("newHandBtn"),
-  overlay: $("overlay"), banner: $("banner"),
+  hintBtn: $("hintBtn"),
+  nextFloat: $("nextHandFloat"),
+  resultStrip: $("resultStrip"),
+  botChips: $("botChips"), addBotBtn: $("addBotBtn"),
 };
 
 let ws = null;
 let lastView = null;
+let botsCfg = [{ name: "Мозг", strategy: "heuristic" }];
+let strategiesList = {};
 
 /* ---------- отрисовка ---------- */
 
@@ -73,12 +73,54 @@ function fmtDist(dist, top = 3) {
     .map(([k, v]) => `${ru(k)} ${Math.round(v * 100)}%`).join(" · ");
 }
 
+/* позиции ботов вокруг стола по количеству */
+const LAYOUTS = {
+  1: ["pos-top"],
+  2: ["pos-tl", "pos-tr"],
+  3: ["pos-left", "pos-top", "pos-right"],
+  4: ["pos-left", "pos-tl", "pos-tr", "pos-right"],
+  5: ["pos-left", "pos-tl", "pos-top", "pos-tr", "pos-right"],
+};
+
+function renderVillains(v) {
+  els.villains.innerHTML = "";
+  const layout = LAYOUTS[Math.min(v.bots.length, 5)] || LAYOUTS[1];
+  v.bots.forEach((b, i) => {
+    const seat = document.createElement("div");
+    seat.className = "seat villain " + (layout[i] || "pos-top");
+    seat.dataset.seat = b.seat;
+    if (v.to_act === b.seat && !v.hand_over) seat.classList.add("active");
+    if (b.folded) seat.classList.add("folded");
+    const reveal = Array.isArray(b.cards);
+    const cardsHtml = b.folded && !reveal ? "" : "";
+    seat.innerHTML = `
+      <div class="avatar">${BOT_AVATARS[(i + 1) % BOT_AVATARS.length]}</div>
+      <div class="plate">
+        <div class="name">${b.name}${b.is_button ? ' <span class="button-mark">D</span>' : ""}</div>
+        <div class="stack">${Math.round(b.stack)}</div>
+        ${b.strategy ? `<div class="strat">${b.strategy}</div>` : ""}
+      </div>
+      <div class="bet-chip">${b.bet > 0 ? Math.round(b.bet) : ""}</div>
+    `;
+    const cards = document.createElement("div");
+    cards.className = "cards";
+    if (b.folded && !reveal) {
+      // сбросил — карты не показываем
+    } else if (reveal) {
+      renderCards(cards, b.cards, 0);
+    } else {
+      renderCards(cards, null, 2);
+    }
+    seat.appendChild(cards);
+    els.villains.appendChild(seat);
+  });
+}
+
 function setActions(view) {
   const legal = view.legal || {};
-  const myTurn = view.to_act === "hero" && !view.hand_over;
+  const myTurn = view.to_act === 1 && !view.hand_over;
   els.actionbar.classList.toggle("hidden", !myTurn);
-  els.newhandBar.classList.toggle("hidden", !view.hand_over);
-
+  els.nextFloat.classList.toggle("hidden", !view.hand_over);
   if (!myTurn) return;
 
   els.foldBtn.disabled = !legal.fold;
@@ -103,71 +145,58 @@ function setActions(view) {
     els.raiseSlider.value = r.min;
     els.raiseInput.min = r.min; els.raiseInput.max = r.max;
     els.raiseInput.value = r.min;
-    els.raiseBtn.textContent = r.min > 0 && view.pot > 0 && r.min <= view.pot ? "Ставка" : "Рейз";
-    // «ставка», если до нас на этой улице не ставили (min <= половины банка условно неточно,
-    // поэтому определяем по контексту ниже)
+    const facing = legal.call !== null && legal.call !== undefined;
+    els.raiseBtn.textContent = facing ? "Рейз" : "Ставка";
     els.raiseBtn.dataset.min = r.min; els.raiseBtn.dataset.max = r.max;
   }
+}
+
+function heroComboText(v) {
+  if (!v.hero.cards || !v.board.length) return "";
+  const val = (c) => ({ T: 10, J: 11, Q: 12, K: 13, A: 14 }[c[0]] || +c[0]);
+  // лёгкая подсказка: пара/оверпара — без полного оценщика
+  const ranks = [...v.hero.cards, ...v.board].map((c) => c[0]);
+  const counts = {};
+  ranks.forEach((r) => (counts[r] = (counts[r] || 0) + 1));
+  const pair = Object.entries(counts).find(([r, n]) => n >= 2);
+  return pair ? `у вас: ${pair[1] >= 3 ? "тройка/каре" : "пара"} ${pair[0]}` : "";
 }
 
 function renderView(v) {
   lastView = v;
   renderCards(els.hCards, v.hero.cards, 0);
-  renderCards(els.vCards, v.villain.cards, v.villain.folded ? 0 : (v.villain.cards ? 0 : 2));
-  if (v.villain.folded) els.vCards.innerHTML = "";
-
+  renderVillains(v);
   renderCards(els.board, v.board, 0, true);
   els.pot.textContent = Math.round(v.pot);
-  els.street.textContent = `${v.street} · рука #${v.hand_no} · счёт ${v.stackline}`;
-
+  els.street.textContent = `${v.street} · рука #${v.hand_no} · ${v.stackline}`;
   els.hStack.textContent = Math.round(v.hero.stack);
-  els.vStack.textContent = Math.round(v.villain.stack);
+  els.heroBtn.textContent = v.hero.is_button ? "D" : "";
   els.hBet.style.display = v.hero.bet > 0 ? "" : "none";
   els.hBet.textContent = v.hero.bet > 0 ? Math.round(v.hero.bet) : "";
-  els.vBet.style.display = v.villain.bet > 0 ? "" : "none";
-  els.vBet.textContent = v.villain.bet > 0 ? Math.round(v.villain.bet) : "";
-
-  els.seatHero.classList.toggle("active", v.to_act === "hero");
-  els.seatVillain.classList.toggle("active", v.to_act === "villain");
-  els.seatVillain.style.opacity = v.villain.folded ? 0.45 : 1;
-
+  els.seatHero.classList.toggle("active", v.to_act === 1 && !v.hand_over);
+  els.combo.textContent = heroComboText(v);
+  if (!v.hand_over) els.resultStrip.classList.add("hidden");
   setActions(v);
-  els.status.textContent = v.hand_over ? "рука завершена" :
-    (v.to_act === "hero" ? "ваш ход" : "мозг думает…");
+  els.status.textContent = v.hand_over ? "рука завершена — следующая сдаётся автоматически"
+    : (v.to_act === 1 ? "ваш ход" : "боты думают…");
 }
 
 function showResult(r) {
-  const title = document.createElement("div");
-  const detail = document.createElement("div");
+  // компактная полоса вместо оверлея
   const win = r.winners.join(" и ");
-  title.className = "title";
-  title.innerHTML = r.kind === "showdown"
-    ? `Шоудаун · <span class="win">${win}</span> +${r.amount}`
-    : `<span class="win">${win}</span> забирает ${r.pot} (оппонент сбросил)`;
-  const lines = [];
+  const main = r.kind === "showdown"
+    ? `🏆 ${win} +${r.amount} (шоудаун)`
+    : `🏆 ${win} забирает ${r.pot} (фолд)`;
+  const parts = [];
   for (const [name, score] of Object.entries(r.scores || {})) {
     const cards = (r.hole_cards || {})[name];
-    const cardsTxt = cards ? ` [${cards.join(" ")}]` : "";
-    const mark = r.winners.includes(name) ? " ←" : "";
-    lines.push(`${name}${cardsTxt}: ${score}${mark}`);
+    const w = (r.winnings || {})[name];
+    parts.push(`${name}${cards ? ` [${cards.join(" ")}]` : ""}: ${score}${w ? ` → +${Math.round(w)}` : ""}`);
   }
-  detail.className = "detail";
-  detail.innerHTML = lines.join("<br>");
-
-  const nextBtn = document.createElement("button");
-  nextBtn.className = "primary big";
-  nextBtn.textContent = "▶ Следующая рука";
-  nextBtn.style.marginTop = "16px";
-  nextBtn.onclick = () => {
-    els.overlay.classList.add("hidden");
-    send({ type: "new_hand" });
-    addLog("— новая рука —", "sys");
-  };
-
-  els.banner.innerHTML = "";
-  els.banner.append(title, detail, nextBtn);
-  els.overlay.classList.remove("hidden");
-  addLog(`рука завершена: ${win} +${r.amount}`, "sys");
+  els.resultStrip.innerHTML = `<div class="main">${main}</div>` +
+    (parts.length ? `<div class="detail">${parts.join(" · ")}</div>` : "");
+  els.resultStrip.classList.remove("hidden");
+  addLog(`рука завершена: ${main}`, "sys");
 }
 
 /* ---------- сеть ---------- */
@@ -187,7 +216,7 @@ function connect() {
   ws.onmessage = (ev) => {
     const msg = JSON.parse(ev.data);
     if (msg.type === "view") renderView(msg);
-    else if (msg.type === "bot") addLog(`🤖 ${msg.ru}`, "bot", fmtDist(msg.dist));
+    else if (msg.type === "bot") addLog(`${msg.name}: ${msg.ru}`, "bot", fmtDist(msg.dist));
     else if (msg.type === "result") showResult(msg);
     else if (msg.type === "hint") addLog(`💡 ${msg.ru}`, "hero", fmtDist(msg.dist));
     else if (msg.type === "error") { addLog(`⚠ ${msg.detail}`, "sys"); els.status.textContent = "ошибка ввода"; }
@@ -200,7 +229,7 @@ function connect() {
   };
 }
 
-/* ---------- обработчики ---------- */
+/* ---------- действия героя ---------- */
 
 els.foldBtn.onclick = () => { send({ type: "action", action: "fold" }); addLog("Вы: фолд", "hero"); };
 els.checkCallBtn.onclick = () => {
@@ -218,16 +247,12 @@ function currentRaise() {
 
 els.raiseBtn.onclick = () => {
   const amt = currentRaise();
-  if (amt === null) return;
-  const isBet = lastView && lastView.hero.bet === 0 && !facingBet(lastView);
-  const verb = isBet ? "bet" : "raise";
+  if (amt === null || !lastView) return;
+  const facing = lastView.legal && lastView.legal.call !== null && lastView.legal.call !== undefined;
+  const verb = facing ? "raise" : "bet";
   send({ type: "action", action: verb, amount: amt });
-  addLog(`Вы: ${isBet ? "ставка" : "рейз до"} ${amt}`, "hero");
+  addLog(`Вы: ${facing ? "рейз до" : "ставка"} ${amt}`, "hero");
 };
-
-function facingBet(v) {
-  return v.legal && v.legal.call !== null && v.legal.call !== undefined && v.legal.call > 0;
-}
 
 els.raiseSlider.oninput = () => { els.raiseInput.value = els.raiseSlider.value; };
 els.raiseInput.oninput = () => { els.raiseSlider.value = els.raiseInput.value; };
@@ -237,10 +262,9 @@ document.querySelectorAll(".presets button").forEach((b) => {
     const v = lastView;
     if (!v || !v.legal.raise) return;
     const { min, max } = v.legal.raise;
-    const pot = v.pot;
     let amt = min;
-    if (b.dataset.preset === "half") amt = Math.max(min, Math.round(pot * 0.5));
-    if (b.dataset.preset === "pot") amt = Math.max(min, Math.round(pot));
+    if (b.dataset.preset === "half") amt = Math.max(min, Math.round(v.pot * 0.5));
+    if (b.dataset.preset === "pot") amt = Math.max(min, Math.round(v.pot));
     if (b.dataset.preset === "max") amt = max;
     amt = Math.min(max, amt);
     els.raiseSlider.value = amt;
@@ -249,23 +273,53 @@ document.querySelectorAll(".presets button").forEach((b) => {
 });
 
 els.hintBtn.onclick = () => send({ type: "hint" });
-els.newHandBtn.onclick = () => {
-  els.overlay.classList.add("hidden");
+els.nextFloat.onclick = () => {
   send({ type: "new_hand" });
   addLog("— новая рука —", "sys");
 };
 
-els.strategy.onchange = () => send({ type: "strategy", name: els.strategy.value });
+/* ---------- настройка ботов ---------- */
+
+function renderBotChips() {
+  els.botChips.innerHTML = "";
+  botsCfg.forEach((b, i) => {
+    const chip = document.createElement("div");
+    chip.className = "bot-chip";
+    const sel = document.createElement("select");
+    Object.keys(strategiesList).forEach((name) => {
+      const opt = document.createElement("option");
+      opt.value = name; opt.textContent = name;
+      sel.appendChild(opt);
+    });
+    sel.value = b.strategy;
+    sel.onchange = () => { botsCfg[i].strategy = sel.value; sendConfigure(); };
+    const rm = document.createElement("button");
+    rm.className = "chip-x"; rm.textContent = "×"; rm.title = "убрать бота";
+    rm.onclick = () => { if (botsCfg.length > 1) { botsCfg.splice(i, 1); sendConfigure(); } };
+    chip.append(sel, rm);
+    els.botChips.appendChild(chip);
+  });
+  els.addBotBtn.disabled = botsCfg.length >= 5;
+}
+
+function sendConfigure() {
+  send({ type: "configure", bots: botsCfg.map((b, i) => ({
+    name: `Мозг ${i + 1}`, strategy: b.strategy,
+  })) });
+  renderBotChips();
+}
+
+els.addBotBtn.onclick = () => {
+  if (botsCfg.length >= 5) return;
+  botsCfg.push({ name: `Мозг ${botsCfg.length + 1}`, strategy: "heuristic" });
+  sendConfigure();
+};
 
 /* старт */
 fetch("/v1/strategies")
   .then((r) => r.json())
   .then((list) => {
-    Object.keys(list).forEach((name) => {
-      const opt = document.createElement("option");
-      opt.value = name; opt.textContent = `${name} — ${list[name]}`;
-      els.strategy.appendChild(opt);
-    });
-    els.strategy.value = "heuristic";
+    strategiesList = list;
+    renderBotChips();
   });
 connect();

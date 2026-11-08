@@ -9,28 +9,21 @@
 <body>
 <header>
   <div class="brand">Pokafer <span>веб-стол</span></div>
-  <div class="controls">
-    <label>мозг:
-      <select id="strategy"></select>
-    </label>
-    <button id="hintBtn" class="ghost" title="Показать, что бы сделал мозг на вашем месте">💡 подсказка</button>
+  <div class="bot-setup">
+    <span class="dim">боты:</span>
+    <div class="bot-chips" id="botChips"></div>
+    <button id="addBotBtn" class="ghost small" title="Добавить бота (до 5)">+ бот</button>
   </div>
+  <button id="hintBtn" class="ghost" title="Что бы сделал мозг на вашем месте">💡 подсказка</button>
 </header>
 
 <main>
   <section class="table-wrap">
     <div class="table">
-      <div class="seat villain" id="seatVillain">
-        <div class="avatar">🤖</div>
-        <div class="plate">
-          <div class="name" id="vName">Мозг</div>
-          <div class="stack" id="vStack">200</div>
-        </div>
-        <div class="bet-chip" id="vBet"></div>
-        <div class="cards" id="vCards"></div>
-      </div>
+      <div class="villains" id="villains"></div>
 
       <div class="middle">
+        <div class="result-strip hidden" id="resultStrip"></div>
         <div class="board" id="board"></div>
         <div class="pot" id="pot"></div>
         <div class="street" id="street"></div>
@@ -40,7 +33,7 @@
         <div class="cards" id="hCards"></div>
         <div class="avatar">🙂</div>
         <div class="plate">
-          <div class="name">Вы</div>
+          <div class="name">Вы <span class="button-mark" id="heroBtn"></span></div>
           <div class="stack" id="hStack">200</div>
         </div>
         <div class="bet-chip" id="hBet"></div>
@@ -63,9 +56,6 @@
         </div>
       </div>
     </div>
-    <div class="newhand-bar hidden" id="newhandBar">
-      <button id="newHandBtn" class="primary big">▶ Следующая рука</button>
-    </div>
   </section>
 
   <aside class="log-panel">
@@ -74,9 +64,7 @@
   </aside>
 </main>
 
-<div class="overlay hidden" id="overlay">
-  <div class="banner" id="banner"></div>
-</div>
+<button id="nextHandFloat" class="primary big hidden">▶ Следующая рука</button>
 
 <div class="statusline" id="status">подключение…</div>
 

@@ -1,22 +1,24 @@
-"""WebSocket-сервер веб-стола: человек (место 1) против мозга (место 2).
+"""WebSocket-сервер веб-стола: человек (место 1) против нескольких ботов.
 
-Протокол (JSON):
-  сервер -> клиент:
-    view    — вид стола с перспективы героя (карты бота скрыты до шоудауна)
-    bot     — ход мозга с распределением (демонстрация смешанной стратегии)
-    result  — итог раздачи (карты раскрываются на шоудауне)
-    hint    — подсказка мозга по текущей ситуации
-    error   — ошибка (напр., нелегальное действие)
-  клиент -> сервер:
-    action    {action: fold|check|call|bet|raise, amount?: float}
-    new_hand  — сдать следующую руку
-    hint      — попросить подсказку
-    strategy  {name} — сменить стратегию мозга со следующей руки
+Боты настраиваются на лету: {"type": "configure", "bots": [{"name": "Мозг 1",
+"strategy": "micro"}, ...]} (до 5 ботов, у каждого своя стратегия).
+
+Протокол (JSON), сервер -> клиент:
+  view    — вид стола с перспективы героя (карты ботов скрыты до шоудауна)
+  bot     — ход конкретного бота с его распределением вероятностей
+  result  — итог раздачи (банки/сайд-поты, карты на шоудауне)
+  hint    — подсказка мозга по текущей ситуации героя
+  log/error — служебные сообщения
+клиент -> сервер:
+  action    {action: fold|check|call|bet|raise, amount?: float}
+  new_hand  — сдать следующую руку немедленно (иначе автосдача по таймеру)
+  hint      — попросить подсказку
+  strategy  {name} — сменить стратегию единственного бота (совместимость)
+  configure {bots: [...]} — пересобрать стол: список ботов и их стратегии
 """
 from __future__ import annotations
 
 import asyncio
-import random
 from pathlib import Path
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -25,21 +27,19 @@ from fastapi.staticfiles import StaticFiles
 
 from pokafer.adapters.replay_file import ReplayFile
 from pokafer.brain.api import Brain
-from pokafer.brain.memory import InMemoryProfileStore
 from pokafer.brain.strategies import available as strategies_available
-from pokafer.core.cards import evaluate7, hand_name_ru, parse_card
 from pokafer.core.engine import HandEngine
 
-HERO, VILLAIN = 1, 2
-NAMES = {HERO: "Вы", VILLAIN: "Мозг"}
+HERO = 1
+HERO_NAME = "Вы"
 START_STACK = 200.0
-BOT_THINK_SEC = 0.6  # пауза для живости
-
-STATIC_DIR = Path(__file__).parent / "static"
+MAX_BOTS = 5
 STREET_RU = {
     "preflop": "префлоп", "flop": "флоп", "turn": "терн",
     "river": "ривер", "showdown": "шоудаун",
 }
+
+STATIC_DIR = Path(__file__).parent / "static"
 
 
 def _ru_action(decision) -> str:
@@ -53,36 +53,65 @@ def _ru_action(decision) -> str:
 
 
 class TableSession:
-    """Состояние одного подключения: движок, мозг, стеки между руками."""
+    """Состояние подключения: места (герой + боты), мозги ботов, стеки."""
 
     def __init__(self, strategy: str = "heuristic", seed: int | None = None,
-                 record_path: str | None = None):
-        self.strategy_name = strategy
-        self.brain = Brain(strategy, memory=InMemoryProfileStore(), seed=seed)
+                 record_path: str | None = None,
+                 bots: list[dict] | None = None):
         self.record_path = record_path
-        self.stacks = {HERO: START_STACK, VILLAIN: START_STACK}
-        self.button = HERO
         self.hand_no = 0
+        self.stacks: dict[int, float] = {}
+        self.names: dict[int, str] = {}
+        self.bot_strategy: dict[int, str] = {}  # seat -> стратегия
+        self.button = 0
+        self.set_bots(bots if bots is not None else [
+            {"name": "Мозг", "strategy": strategy}
+        ])
+        self._seed = seed
         self._start_hand()
 
+    # ---------- конфигурация ----------
+
+    def set_bots(self, bots: list[dict]) -> None:
+        if not 1 <= len(bots) <= MAX_BOTS:
+            raise ValueError(f"ботов должно быть от 1 до {MAX_BOTS}")
+        known = strategies_available()
+        names_seen: set[str] = set()
+        self.names = {HERO: HERO_NAME}
+        self.bot_strategy = {}
+        for i, b in enumerate(bots, start=2):
+            strategy = b.get("strategy", "heuristic")
+            if strategy not in known:
+                raise KeyError(f"нет стратегии {strategy!r}")
+            name = str(b.get("name") or f"Мозг {i - 1}").strip() or f"Мозг {i - 1}"
+            while name in names_seen:
+                name += "*"
+            names_seen.add(name)
+            self.names[i] = name
+            self.bot_strategy[i] = strategy
+        self.stacks = {s: START_STACK for s in self.names}
+        self.button = 0
+
     def _start_hand(self) -> None:
-        if min(self.stacks.values()) <= 0:  # кто-то bust — новая сессия стеков
-            self.stacks = {HERO: START_STACK, VILLAIN: START_STACK}
+        if min(self.stacks.values()) <= 0:
+            self.stacks = {s: START_STACK for s in self.names}
         self.hand_no += 1
-        self.button = HERO if self.button == VILLAIN else VILLAIN
+        seats_order = sorted(self.names)
+        if self.button in self.names:
+            self.button = seats_order[(seats_order.index(self.button) + 1) % len(seats_order)]
+        else:
+            self.button = seats_order[0]
         self.engine = HandEngine(
             seat_stacks=dict(self.stacks),
-            names=NAMES,
+            names=self.names,
             button_seat=self.button,
             hand_id=f"web-{self.hand_no:04d}",
             table_id="web-table",
         )
-
-    def set_strategy(self, name: str) -> None:
-        if name not in strategies_available():
-            raise KeyError(f"нет стратегии {name!r}")
-        self.strategy_name = name
-        self.brain = Brain(name, memory=InMemoryProfileStore())
+        self.brains = {
+            seat: Brain(strategy, seed=self._seed)
+            for seat, strategy in self.bot_strategy.items()
+        }
 
     # ---------- вид для клиента ----------
 
@@ -90,7 +119,6 @@ class TableSession:
         e = self.engine
         snap = e.snapshot_for(HERO)
         me = next(s for s in snap.seats if s.seat == HERO)
-        opp = next(s for s in snap.seats if s.seat == VILLAIN)
         legal: dict = {"fold": False, "check": False, "call": None, "raise": None}
         if not e.hand_over and e.actor_seat == HERO:
             for la in e.legal(HERO):
@@ -111,52 +139,51 @@ class TableSession:
             "street": STREET_RU[snap.street],
             "board": snap.board,
             "pot": snap.pot,
-            "hero": self._seat_view(me),
-            "villain": self._seat_view(opp),
-            "to_act": None if e.hand_over else ("hero" if e.actor_seat == HERO else "villain"),
+            "hero": {
+                "seat": HERO, "name": HERO_NAME, "stack": me.stack,
+                "bet": me.bet_street, "invested": me.invested,
+                "folded": me.folded, "all_in": me.all_in,
+                "cards": me.hole_cards,
+                "is_button": self.button == HERO,
+            },
+            "bots": [
+                {
+                    "seat": s.seat, "name": self.names[s.seat], "stack": s.stack,
+                    "bet": s.bet_street, "invested": s.invested,
+                    "folded": s.folded, "all_in": s.all_in,
+                    "cards": s.hole_cards,  # None, пока не шоудаун
+                    "strategy": self.bot_strategy.get(s.seat),
+                    "is_button": self.button == s.seat,
+                }
+                for s in snap.seats if s.seat != HERO
+            ],
+            "to_act": None if e.hand_over else e.actor_seat,
             "legal": legal,
             "hand_over": e.hand_over,
-            "stackline": f"{self.stacks[HERO]:g} : {self.stacks[VILLAIN]:g}",
+            "stackline": " · ".join(
+                f"{self.names[s]} {self.stacks.get(s, 0):g}"
+                for s in sorted(self.stacks)
+            ),
         }
-
-    @staticmethod
-    def _seat_view(s) -> dict:
-        return {
-            "name": NAMES[s.seat],
-            "stack": s.stack,
-            "bet": s.bet_street,
-            "invested": s.invested,
-            "folded": s.folded,
-            "all_in": s.all_in,
-            "cards": s.hole_cards,
-            "is_hero": s.is_hero,
-        }
-
-    def hero_combo(self) -> str | None:
-        snap = self.engine.snapshot_for(HERO)
-        me = next(s for s in snap.seats if s.seat == HERO)
-        if not me.hole_cards or not snap.board:
-            return None
-        cards = [parse_card(c) for c in list(me.hole_cards) + list(snap.board)]
-        return hand_name_ru(evaluate7(cards))
 
     # ---------- ходы ----------
 
-    def apply_hero(self, action: str, amount: float | None) -> None:
-        self.engine.apply(action, amount)
-
     def bot_step(self) -> dict | None:
-        """Один ход мозга (если его очередь). Возвращает событие для клиента."""
+        """Один ход бота, если его очередь."""
         e = self.engine
-        if e.hand_over or e.actor_seat != VILLAIN:
+        if e.hand_over or e.actor_seat == HERO:
             return None
-        snap = e.snapshot_for(VILLAIN)
-        d = self.brain.decide(snap)
+        seat = e.actor_seat
+        brain = self.brains[seat]
+        snap = e.snapshot_for(seat)
+        d = brain.decide(snap)
         e.apply(d.action, d.amount_to)
         if self.record_path:
             ReplayFile.append(self.record_path, snap, d.model_dump())
         return {
             "type": "bot",
+            "seat": seat,
+            "name": self.names[seat],
             "decision": d.key(),
             "ru": _ru_action(d),
             "dist": {k: round(v, 3) for k, v in d.distribution.items()},
@@ -164,24 +191,31 @@ class TableSession:
         }
 
     def finish_hand(self) -> dict | None:
-        """Фиксирует итог руки (стеки), но НЕ сдаёт следующую — её попросит клиент."""
         e = self.engine
         if not e.hand_over:
             return None
         res = e.result or {}
-        self.stacks = {s: e.seats[s].stack for s in (HERO, VILLAIN)}
+        self.stacks = {s: e.seats[s].stack for s in self.names}
+        name_of = self.names
         return {
             "type": "result",
             "kind": res.get("type"),
-            "winners": [NAMES[w] for w in res.get("winners", [])],
+            "winners": [name_of[w] for w in res.get("winners", [])],
             "pot": res.get("pot"),
             "amount": res.get("amount"),
-            "scores": res.get("scores_ru", res.get("scores", {})),
-            "hole_cards": {NAMES[k]: v for k, v in res.get("hole_cards", {}).items()},
+            "winnings": {name_of[s]: a for s, a in res.get("winnings", {}).items()},
+            "pots": [
+                {"amount": p["amount"], "winners": [name_of[w] for w in p["winners"]]}
+                for p in res.get("pots", [])
+            ],
+            "scores": {name_of[s]: n for s, n in res.get("scores_ru", res.get("scores", {})).items()},
+            "hole_cards": {name_of[s]: c for s, c in res.get("hole_cards", {}).items()},
         }
 
 
-def create_table_app(default_strategy: str = "heuristic", bot_think_sec: float = BOT_THINK_SEC) -> FastAPI:
+def create_table_app(default_strategy: str = "heuristic",
+                     bot_think_sec: float = 0.5,
+                     auto_next_sec: float = 5.0) -> FastAPI:
     app = FastAPI(title="Pokafer Web Table")
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
@@ -193,60 +227,103 @@ def create_table_app(default_strategy: str = "heuristic", bot_think_sec: float =
     def list_strategies():
         return strategies_available()
 
-    async def advance_bot(session: TableSession, ws: WebSocket) -> None:
-        """Доигрывает ходы мозга (с паузой для живости) и закрывает раздачу."""
-        while not session.engine.hand_over and session.engine.actor_seat == VILLAIN:
-            await asyncio.sleep(bot_think_sec)
-            event = session.bot_step()
-            if event is None:
-                break
-            await ws.send_json(event)
-            await ws.send_json(session.view())
-        if session.engine.hand_over:
-            await ws.send_json(session.finish_hand())
-            await ws.send_json(session.view())  # свежие стеки и кнопка «следующая рука»
-
     @app.websocket("/ws/table")
     async def table(ws: WebSocket, strategy: str = default_strategy, seed: int | None = None):
         await ws.accept()
         session = TableSession(strategy=strategy, seed=seed)
-        await ws.send_json(session.view())
+        auto_task: asyncio.Task | None = None
+
+        def cancel_auto() -> None:
+            nonlocal auto_task
+            if auto_task is not None:
+                auto_task.cancel()
+                auto_task = None
+
+        async def schedule_auto() -> None:
+            nonlocal auto_task
+            cancel_auto()
+
+            async def _auto() -> None:
+                await asyncio.sleep(auto_next_sec)
+                if session.engine.hand_over:
+                    session._start_hand()
+                    await ws.send_json(session.view())
+                    await advance_bot()
+
+            auto_task = asyncio.create_task(_auto())
+
+        async def advance_bot() -> None:
+            """Доигрывает ходы ботов и закрывает раздачу (с автосдачей)."""
+            while not session.engine.hand_over and session.engine.actor_seat != HERO:
+                await asyncio.sleep(bot_think_sec)
+                event = session.bot_step()
+                if event is None:
+                    break
+                await ws.send_json(event)
+                await ws.send_json(session.view())
+            if session.engine.hand_over:
+                await ws.send_json(session.finish_hand())
+                await ws.send_json(session.view())
+                await schedule_auto()
+
         try:
-            await advance_bot(session, ws)  # бот может ходить первым (SB на своей кнопке)
+            await ws.send_json(session.view())
+            await advance_bot()
             while True:
                 msg = await ws.receive_json()
                 mtype = msg.get("type")
                 if mtype == "action":
+                    cancel_auto()
                     try:
-                        session.apply_hero(msg["action"], msg.get("amount"))
+                        session.engine.apply(msg["action"], msg.get("amount"))
                     except (ValueError, KeyError, RuntimeError) as e:
                         await ws.send_json({"type": "error", "detail": str(e)})
                         continue
                     await ws.send_json(session.view())
+                    await advance_bot()
                 elif mtype == "new_hand":
-                    session._start_hand()
+                    cancel_auto()
+                    if session.engine.hand_over:
+                        session._start_hand()
                     await ws.send_json(session.view())
+                    await advance_bot()
+                elif mtype == "configure":
+                    cancel_auto()
+                    try:
+                        session.set_bots(msg.get("bots", []))
+                        session._start_hand()
+                        await ws.send_json({"type": "log", "text": "стол пересобран"})
+                    except (ValueError, KeyError) as e:
+                        await ws.send_json({"type": "error", "detail": str(e)})
+                        continue
+                    await ws.send_json(session.view())
+                    await advance_bot()
                 elif mtype == "hint":
                     snap = session.engine.snapshot_for(HERO)
-                    d = session.brain.decide(snap)
-                    await ws.send_json({
-                        "type": "hint",
-                        "ru": _ru_action(d),
-                        "dist": {k: round(v, 3) for k, v in d.distribution.items()},
-                        "reasoning": d.reasoning,
-                    })
-                    continue
+                    d = session.brains[next(iter(session.brains))].decide(snap) \
+                        if session.brains else None
+                    if d is not None:
+                        await ws.send_json({
+                            "type": "hint",
+                            "ru": _ru_action(d),
+                            "dist": {k: round(v, 3) for k, v in d.distribution.items()},
+                            "reasoning": d.reasoning,
+                        })
                 elif mtype == "strategy":
+                    # совместимость: смена стратегии единственного бота
                     try:
-                        session.set_strategy(msg["name"])
+                        bots = [{"name": session.names[s], "strategy": msg["name"]}
+                                for s in session.bot_strategy]
+                        session.set_bots(bots)
                         await ws.send_json({"type": "log", "text": f"стратегия: {msg['name']}"})
                     except KeyError as e:
                         await ws.send_json({"type": "error", "detail": str(e)})
-                    continue
-                else:
-                    continue
-                await advance_bot(session, ws)
+                        continue
+                    await ws.send_json(session.view())
         except WebSocketDisconnect:
+            cancel_auto()
             return
+        finally:
+            cancel_auto()
 
     return app
