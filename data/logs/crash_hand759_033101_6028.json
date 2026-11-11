@@ -1,0 +1,358 @@
+{
+ "reason": "рука 759, действие #23: чипы изменились 1800 -> 1800",
+ "hand_no": 759,
+ "deck_seed": 222653408,
+ "actions": [
+  {
+   "order": 0,
+   "street": "preflop",
+   "seat": 5,
+   "type": "post",
+   "amount_to": 1.0,
+   "amount": 1.0
+  },
+  {
+   "order": 1,
+   "street": "preflop",
+   "seat": 6,
+   "type": "post",
+   "amount_to": 2.0,
+   "amount": 2.0
+  },
+  {
+   "order": 2,
+   "street": "preflop",
+   "seat": 7,
+   "type": "fold",
+   "amount_to": null,
+   "amount": 0.0
+  },
+  {
+   "order": 3,
+   "street": "preflop",
+   "seat": 8,
+   "type": "call",
+   "amount_to": 2.0,
+   "amount": 2.0
+  },
+  {
+   "order": 4,
+   "street": "preflop",
+   "seat": 9,
+   "type": "fold",
+   "amount_to": null,
+   "amount": 0.0
+  },
+  {
+   "order": 5,
+   "street": "preflop",
+   "seat": 1,
+   "type": "fold",
+   "amount_to": null,
+   "amount": 0.0
+  },
+  {
+   "order": 6,
+   "street": "preflop",
+   "seat": 2,
+   "type": "fold",
+   "amount_to": null,
+   "amount": 0.0
+  },
+  {
+   "order": 7,
+   "street": "preflop",
+   "seat": 3,
+   "type": "call",
+   "amount_to": 2.0,
+   "amount": 2.0
+  },
+  {
+   "order": 8,
+   "street": "preflop",
+   "seat": 4,
+   "type": "fold",
+   "amount_to": null,
+   "amount": 0.0
+  },
+  {
+   "order": 9,
+   "street": "preflop",
+   "seat": 5,
+   "type": "fold",
+   "amount_to": null,
+   "amount": 0.0
+  },
+  {
+   "order": 10,
+   "street": "preflop",
+   "seat": 6,
+   "type": "check",
+   "amount_to": null,
+   "amount": 0.0
+  },
+  {
+   "order": 11,
+   "street": "flop",
+   "seat": 6,
+   "type": "check",
+   "amount_to": null,
+   "amount": 0.0
+  },
+  {
+   "order": 12,
+   "street": "flop",
+   "seat": 8,
+   "type": "check",
+   "amount_to": null,
+   "amount": 0.0
+  },
+  {
+   "order": 13,
+   "street": "flop",
+   "seat": 3,
+   "type": "bet",
+   "amount_to": 2.0,
+   "amount": 2.0
+  },
+  {
+   "order": 14,
+   "street": "flop",
+   "seat": 6,
+   "type": "call",
+   "amount_to": 2.0,
+   "amount": 2.0
+  },
+  {
+   "order": 15,
+   "street": "flop",
+   "seat": 8,
+   "type": "call",
+   "amount_to": 2.0,
+   "amount": 2.0
+  },
+  {
+   "order": 16,
+   "street": "turn",
+   "seat": 6,
+   "type": "check",
+   "amount_to": null,
+   "amount": 0.0
+  },
+  {
+   "order": 17,
+   "street": "turn",
+   "seat": 8,
+   "type": "check",
+   "amount_to": null,
+   "amount": 0.0
+  },
+  {
+   "order": 18,
+   "street": "turn",
+   "seat": 3,
+   "type": "check",
+   "amount_to": null,
+   "amount": 0.0
+  },
+  {
+   "order": 19,
+   "street": "river",
+   "seat": 6,
+   "type": "check",
+   "amount_to": null,
+   "amount": 0.0
+  },
+  {
+   "order": 20,
+   "street": "river",
+   "seat": 8,
+   "type": "bet",
+   "amount_to": 2.0,
+   "amount": 2.0
+  },
+  {
+   "order": 21,
+   "street": "river",
+   "seat": 3,
+   "type": "call",
+   "amount_to": 2.0,
+   "amount": 2.0
+  },
+  {
+   "order": 22,
+   "street": "river",
+   "seat": 6,
+   "type": "call",
+   "amount_to": 2.0,
+   "amount": 2.0
+  }
+ ],
+ "seats": [
+  {
+   "seat": 1,
+   "name": "micro#1",
+   "stack": 200.0,
+   "invested": 0.0,
+   "folded": true,
+   "all_in": false,
+   "hole": [
+    1,
+    32
+   ]
+  },
+  {
+   "seat": 2,
+   "name": "fish#1",
+   "stack": 200.0,
+   "invested": 0.0,
+   "folded": true,
+   "all_in": false,
+   "hole": [
+    43,
+    38
+   ]
+  },
+  {
+   "seat": 3,
+   "name": "heuristic#1",
+   "stack": 200.3333,
+   "invested": 0.0,
+   "folded": false,
+   "all_in": false,
+   "hole": [
+    3,
+    2
+   ]
+  },
+  {
+   "seat": 4,
+   "name": "micro#2",
+   "stack": 200.0,
+   "invested": 0.0,
+   "folded": true,
+   "all_in": false,
+   "hole": [
+    4,
+    5
+   ]
+  },
+  {
+   "seat": 5,
+   "name": "fish#2",
+   "stack": 199.0,
+   "invested": 0.0,
+   "folded": true,
+   "all_in": false,
+   "hole": [
+    18,
+    21
+   ]
+  },
+  {
+   "seat": 6,
+   "name": "heuristic#2",
+   "stack": 200.3333,
+   "invested": 0.0,
+   "folded": false,
+   "all_in": false,
+   "hole": [
+    0,
+    31
+   ]
+  },
+  {
+   "seat": 7,
+   "name": "micro#3",
+   "stack": 200.0,
+   "invested": 0.0,
+   "folded": true,
+   "all_in": false,
+   "hole": [
+    37,
+    47
+   ]
+  },
+  {
+   "seat": 8,
+   "name": "fish#3",
+   "stack": 200.3333,
+   "invested": 0.0,
+   "folded": false,
+   "all_in": false,
+   "hole": [
+    22,
+    25
+   ]
+  },
+  {
+   "seat": 9,
+   "name": "heuristic#3",
+   "stack": 200.0,
+   "invested": 0.0,
+   "folded": true,
+   "all_in": false,
+   "hole": [
+    8,
+    14
+   ]
+  }
+ ],
+ "board": [
+  50,
+  39,
+  48,
+  45,
+  44
+ ],
+ "street": "showdown",
+ "result": {
+  "type": "showdown",
+  "winners": [
+   3,
+   6,
+   8
+  ],
+  "pot": 19.0,
+  "amount": 6.3333,
+  "winnings": {
+   "3": 6.3333,
+   "6": 6.3333,
+   "8": 6.3333
+  },
+  "pots": [
+   {
+    "amount": 19.0,
+    "winners": [
+     3,
+     6,
+     8
+    ]
+   }
+  ],
+  "scores": {
+   "3": "two pair, As and Ks",
+   "6": "two pair, As and Ks",
+   "8": "two pair, As and Ks"
+  },
+  "scores_ru": {
+   "3": "две пары: A и K",
+   "6": "две пары: A и K",
+   "8": "две пары: A и K"
+  },
+  "hole_cards": {
+   "3": [
+    "2c",
+    "2d"
+   ],
+   "6": [
+    "2s",
+    "9c"
+   ],
+   "8": [
+    "7d",
+    "8h"
+   ]
+  }
+ }
+}

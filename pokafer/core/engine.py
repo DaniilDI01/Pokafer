@@ -290,12 +290,23 @@ class HandEngine:
     def _pot(self) -> float:
         return sum(s.invested for s in self.seats.values())
 
+    def _close_hand_bookkeeping(self) -> None:
+        """Раздача закончена: ставки/вложения обнуляются (чипы уже в стеках).
+
+        Без этого stack+invested давал бы двойной счёт уже выплаченных
+        банков — ловится инвариантом в scripts/benchmark.py.
+        """
+        for s in self.seats.values():
+            s.bet_street = 0.0
+            s.invested = 0.0
+
     def _finish_by_fold(self, winner: int) -> None:
         pot = self._pot()
         self.seats[winner].stack += pot
         self.street = "showdown"
         self.hand_over = True
         self._actor = None
+        self._close_hand_bookkeeping()
         self.result = {
             "type": "fold_win",
             "winners": [winner],
@@ -358,10 +369,15 @@ class HandEngine:
             layer_winners = [
                 c for c in layer["contenders"] if scored[c] == best
             ]
-            share = round(layer["amount"] / len(layer_winners), 4)
-            for w in layer_winners:
-                winnings[w] += share
-                self.seats[w].stack += share
+            # деление банка целыми центами: остаток (до n-1 цента) — первым
+            # в списке победителей; иначе round() теряет деньги (7/3 -> 6.9999)
+            cents = round(layer["amount"] * 100)
+            n = len(layer_winners)
+            share, rem = divmod(cents, n)
+            for i, w in enumerate(layer_winners):
+                amt = (share + (1 if i < rem else 0)) / 100.0
+                winnings[w] += amt
+                self.seats[w].stack += amt
             pot_winners.append({
                 "amount": layer["amount"],
                 "winners": layer_winners,
@@ -371,6 +387,7 @@ class HandEngine:
         self.street = "showdown"
         self.hand_over = True
         self._actor = None
+        self._close_hand_bookkeeping()
         self.result = {
             "type": "showdown",
             "winners": winners,

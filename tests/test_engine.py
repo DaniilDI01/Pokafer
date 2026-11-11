@@ -53,6 +53,9 @@ def test_hand_to_showdown_conserves_chips():
     total = sum(s.stack for s in e.seats.values())
     assert abs(total - 400.0) < 1e-6
     assert abs(e.result["pot"] - 12.0) < 1e-6
+    # бухгалтерия закрыта: вложения обнулены, двойного счёта нет
+    assert all(s.invested == 0.0 and s.bet_street == 0.0 for s in e.seats.values())
+    assert abs(sum(s.stack + s.invested for s in e.seats.values()) - 400.0) < 1e-6
 
 
 def test_fold_ends_hand():
@@ -74,6 +77,38 @@ def test_illegal_action_rejected():
         e.apply("raise", 3)       # ниже мин-рейза
     with pytest.raises(ValueError):
         e.apply("raise", 999999)  # выше олл-ина
+
+
+def test_stress_chip_conservation_with_splits():
+    """Много случайных раздач до шоудауна: чипи сходятся до цента.
+
+    Ловит утечки округления в сплит-потах (7/3 банка) и двойной счёт
+    invested после итога раздачи.
+    """
+    import random
+
+    from pokafer.brain.api import Brain
+
+    rng = random.Random(99)
+    for h in range(300):
+        stacks = {1: 200.0, 2: 130.0, 3: 200.0, 4: 90.0}
+        e = HandEngine(
+            seat_stacks=dict(stacks), names={s: f"p{s}" for s in stacks},
+            button_seat=rng.choice(list(stacks)), seed=rng.randrange(2**31),
+        )
+        brains = {s: Brain("fish", seed=h) for s in stacks}  # станции: много шоудаунов
+        guard = 0
+        while not e.hand_over:
+            guard += 1
+            assert guard < 400
+            seat = e.actor_seat
+            d = brains[seat].decide(e.snapshot_for(seat))
+            e.apply(d.action, d.amount_to)
+            total_now = sum(x.stack + x.invested for x in e.seats.values())
+            assert abs(total_now - 620.0) < 1e-6, f"рука {h}: чипы {total_now!r}"
+        final = sum(x.stack for x in e.seats.values())
+        assert abs(final - 620.0) < 1e-6, f"рука {h}: итог {final!r}"
+        assert all(x.invested == 0.0 for x in e.seats.values())
 
 
 def test_uncalled_bet_refunded_hu_allin():

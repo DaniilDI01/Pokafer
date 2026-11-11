@@ -1,0 +1,98 @@
+{
+ "reason": "рука 0, действие #6: чипы изменились 400 -> 602",
+ "hand_no": 0,
+ "deck_seed": 1022050301,
+ "actions": [
+  {
+   "order": 0,
+   "street": "preflop",
+   "seat": 1,
+   "type": "post",
+   "amount_to": 1.0,
+   "amount": 1.0
+  },
+  {
+   "order": 1,
+   "street": "preflop",
+   "seat": 2,
+   "type": "post",
+   "amount_to": 2.0,
+   "amount": 2.0
+  },
+  {
+   "order": 2,
+   "street": "preflop",
+   "seat": 1,
+   "type": "call",
+   "amount_to": 2.0,
+   "amount": 1.0
+  },
+  {
+   "order": 3,
+   "street": "preflop",
+   "seat": 2,
+   "type": "check",
+   "amount_to": null,
+   "amount": 0.0
+  },
+  {
+   "order": 4,
+   "street": "flop",
+   "seat": 2,
+   "type": "bet",
+   "amount_to": 198.0,
+   "amount": 198.0
+  },
+  {
+   "order": 5,
+   "street": "flop",
+   "seat": 1,
+   "type": "fold",
+   "amount_to": null,
+   "amount": 0.0
+  }
+ ],
+ "seats": [
+  {
+   "seat": 1,
+   "name": "fish#1",
+   "stack": 198.0,
+   "invested": 2.0,
+   "folded": true,
+   "all_in": false,
+   "hole": [
+    24,
+    41
+   ]
+  },
+  {
+   "seat": 2,
+   "name": "micro#1",
+   "stack": 202.0,
+   "invested": 200.0,
+   "folded": false,
+   "all_in": true,
+   "hole": [
+    7,
+    46
+   ]
+  }
+ ],
+ "board": [
+  13,
+  44,
+  17
+ ],
+ "street": "showdown",
+ "result": {
+  "type": "fold_win",
+  "winners": [
+   2
+  ],
+  "pot": 202.0,
+  "amount": 202.0,
+  "winnings": {
+   "2": 202.0
+  }
+ }
+}
