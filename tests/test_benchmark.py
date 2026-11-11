@@ -1,21 +1,14 @@
-"""Тесты универсальной проверялки (scripts/benchmark.py).
+"""Тесты универсальной проверялки (pokafer/benchmark.py).
 
 Главный инвариант: чипы не появляются и не исчезают — на каждом действии
 и в итоге каждой руки. Плюс детектор должен реально ловить порчу денег.
 """
-import importlib.util
 import json
-from pathlib import Path
 
 import pytest
 
-_spec = importlib.util.spec_from_file_location(
-    "benchmark", Path(__file__).resolve().parents[1] / "scripts" / "benchmark.py"
-)
-benchmark = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(benchmark)
-
-from pokafer.core.engine import HandEngine  # noqa: E402
+from pokafer import benchmark
+from pokafer.core.engine import HandEngine
 
 
 def test_benchmark_run_conserves_chips(tmp_path):

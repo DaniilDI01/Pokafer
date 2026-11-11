@@ -7,6 +7,8 @@ build/
 dist/
 data/raw/*
 data/snapshots/*
+data/logs/*
 !data/raw/.gitkeep
 !data/snapshots/.gitkeep
+!data/logs/.gitkeep
 .env

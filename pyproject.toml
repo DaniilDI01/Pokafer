@@ -20,6 +20,9 @@ dev = [
     "httpx>=0.27",
 ]
 
+[project.scripts]
+pokafer = "pokafer.cli:main"
+
 [tool.setuptools.packages.find]
 include = ["pokafer*"]
 

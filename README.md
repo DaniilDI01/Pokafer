@@ -19,12 +19,20 @@
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
-pytest -q                                  # все тесты
-python scripts/demo_cli.py                 # сыграть руку против мозга в терминале
-python scripts/serve_brain.py              # HTTP-сервис на 127.0.0.1:8000
-python scripts/serve_table.py              # веб-стол в браузере: http://127.0.0.1:8010
-python scripts/train_kuhn.py               # CFR считает равновесие Куна (блеф включён)
-python scripts/arena.py --a micro --b fish # матч стратегий, bb/100
+pokafer                # справка: все команды проекта
+pytest -q              # все тесты
+```
+
+Основные команды (у каждой своя справка `pokafer <команда> -h`):
+
+```bash
+pokafer demo                      # рука против мозга в терминале
+pokafer table --port 8010         # веб-стол в браузере (вы против ботов)
+pokafer brain --port 8000         # HTTP-API мозга (docs: /docs)
+pokafer bench --hands 30000       # обкатка стратегий (конфиг: configs/benchmark.py)
+pokafer arena --a micro --b fish  # дуэль двух стратегий, bb/100
+pokafer kuhn                      # CFR на покере Куна: равновесие и блеф
+pokafer status                    # что запущено, стратегии, последние прогоны
 ```
 
 ## С каким JSON работает мозг
