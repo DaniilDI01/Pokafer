@@ -70,8 +70,8 @@ def main() -> None:
     ci = 1.96 * HU_STD_BB100 / (args.hands / 100.0) ** 0.5
     print(f"Матч: {args.a} (A) vs {args.b} (B), HU NLHE {args.stacks / args.bb:.0f}bb")
     print(f"Рук: {args.hands} за {dt:.1f} с ({args.hands / dt:.0f} рук/с)")
-    print(f"Винрейт A: {wr:+.1f} bb/100  (95% CI: ±{ci:.1f})")
-    print(f"Винрейт B: {-wr:+.1f} bb/100")
+    print(f"Винрейт {args.a} (A): {wr:+.1f} bb/100  (95% CI: ±{ci:.1f})")
+    print(f"Винрейт {args.b} (B): {-wr:+.1f} bb/100")
 
 
 if __name__ == "__main__":
