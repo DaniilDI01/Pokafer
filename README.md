@@ -31,7 +31,6 @@ pokafer table --port 8010         # веб-стол в браузере (вы п
 pokafer brain --port 8000         # HTTP-API мозга (docs: /docs)
 pokafer bench --hands 30000       # обкатка стратегий (конфиг: configs/benchmark.py)
 pokafer arena --a micro --b fish  # дуэль двух стратегий, bb/100
-pokafer kuhn                      # CFR на покере Куна: равновесие и блеф
 pokafer status                    # что запущено, стратегии, последние прогоны
 ```
 
@@ -94,7 +93,6 @@ curl -s localhost:8000/v1/decide -H 'Content-Type: application/json' \
 | `pokafer.brain` | Brain (JSON→JSON), реестр стратегий, память об оппонентах, FastAPI-сервис |
 | `pokafer.adapters` | replay JSONL (офлайн), заготовка парсера PokerNow |
 | `pokafer.analysis` | VPIP/PFR/AF/fold-vs-bet — фичи для слоя модели оппонента |
-| `pokafer.research` | CFR на покере Куна (учебное ядро GTO-блюпринта) |
 
 ## Стратегии: текущие и план
 
@@ -102,7 +100,6 @@ curl -s localhost:8000/v1/decide -H 'Content-Type: application/json' \
 |---|---|---|
 | `random` | ✅ | равномерная — калибровка арены |
 | `heuristic` | ✅ | пот-оддсы + смешанные блефы (демо-соперник) |
-| `kuhn_cfr` | 🧪 research | CFR-равновесие Куна (ядро матчасти) |
 | `gto_blueprint` | 🔜 | MCCFR-блюпринт NLHE (CPU, рецепт Pluribus) |
 | `nn_value` | 🔜 | value-сеть + depth-limited solving (рецепт DeepStack) |
 | `opponent_model` | 🔜 | GRU/трансформер на историях действий — эксплойт-слой |

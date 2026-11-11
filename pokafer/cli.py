@@ -43,11 +43,6 @@ COMMANDS = {
         "дуэль двух стратегий 1-на-1, bb/100 с доверительным интервалом",
         "pokafer arena --a micro --b fish --hands 100000",
     ),
-    "kuhn": (
-        "scripts/train_kuhn.py",
-        "CFR на покере Куна: равновесие и вычисленный (не захардкоженный) блеф",
-        "pokafer kuhn --iterations 30000",
-    ),
     "replay": (
         "scripts/replay_offline.py",
         "прогон мозга по историческим снапшотам (JSONL) + профили игроков",
