@@ -1,0 +1,1701 @@
+{
+ "meta": {
+  "generator": "scripts/gen_preflop_equity.py",
+  "seed": 7,
+  "rollouts_per_class": 2000,
+  "opponent": "uniform random hand",
+  "seconds": 6.4
+ },
+ "ranking": [
+  {
+   "class": [
+    12,
+    12,
+    0
+   ],
+   "label": "AA",
+   "eq": 0.8661,
+   "combos": 6
+  },
+  {
+   "class": [
+    11,
+    11,
+    0
+   ],
+   "label": "KK",
+   "eq": 0.8135,
+   "combos": 6
+  },
+  {
+   "class": [
+    10,
+    10,
+    0
+   ],
+   "label": "QQ",
+   "eq": 0.8016,
+   "combos": 6
+  },
+  {
+   "class": [
+    9,
+    9,
+    0
+   ],
+   "label": "JJ",
+   "eq": 0.7827,
+   "combos": 6
+  },
+  {
+   "class": [
+    8,
+    8,
+    0
+   ],
+   "label": "TT",
+   "eq": 0.7356,
+   "combos": 6
+  },
+  {
+   "class": [
+    7,
+    7,
+    0
+   ],
+   "label": "99",
+   "eq": 0.7175,
+   "combos": 6
+  },
+  {
+   "class": [
+    6,
+    6,
+    0
+   ],
+   "label": "88",
+   "eq": 0.7138,
+   "combos": 6
+  },
+  {
+   "class": [
+    12,
+    9,
+    1
+   ],
+   "label": "AJs",
+   "eq": 0.6659,
+   "combos": 4
+  },
+  {
+   "class": [
+    12,
+    11,
+    1
+   ],
+   "label": "AKs",
+   "eq": 0.6607,
+   "combos": 4
+  },
+  {
+   "class": [
+    12,
+    9,
+    0
+   ],
+   "label": "AJo",
+   "eq": 0.6558,
+   "combos": 12
+  },
+  {
+   "class": [
+    5,
+    5,
+    0
+   ],
+   "label": "77",
+   "eq": 0.6538,
+   "combos": 6
+  },
+  {
+   "class": [
+    12,
+    11,
+    0
+   ],
+   "label": "AKo",
+   "eq": 0.6488,
+   "combos": 12
+  },
+  {
+   "class": [
+    12,
+    8,
+    1
+   ],
+   "label": "ATs",
+   "eq": 0.6483,
+   "combos": 4
+  },
+  {
+   "class": [
+    12,
+    10,
+    1
+   ],
+   "label": "AQs",
+   "eq": 0.6466,
+   "combos": 4
+  },
+  {
+   "class": [
+    11,
+    8,
+    1
+   ],
+   "label": "KTs",
+   "eq": 0.6354,
+   "combos": 4
+  },
+  {
+   "class": [
+    11,
+    10,
+    1
+   ],
+   "label": "KQs",
+   "eq": 0.6319,
+   "combos": 4
+  },
+  {
+   "class": [
+    4,
+    4,
+    0
+   ],
+   "label": "66",
+   "eq": 0.6305,
+   "combos": 6
+  },
+  {
+   "class": [
+    12,
+    10,
+    0
+   ],
+   "label": "AQo",
+   "eq": 0.6302,
+   "combos": 12
+  },
+  {
+   "class": [
+    12,
+    7,
+    1
+   ],
+   "label": "A9s",
+   "eq": 0.625,
+   "combos": 4
+  },
+  {
+   "class": [
+    12,
+    8,
+    0
+   ],
+   "label": "ATo",
+   "eq": 0.6245,
+   "combos": 12
+  },
+  {
+   "class": [
+    11,
+    10,
+    0
+   ],
+   "label": "KQo",
+   "eq": 0.6178,
+   "combos": 12
+  },
+  {
+   "class": [
+    12,
+    6,
+    1
+   ],
+   "label": "A8s",
+   "eq": 0.6161,
+   "combos": 4
+  },
+  {
+   "class": [
+    10,
+    9,
+    1
+   ],
+   "label": "QJs",
+   "eq": 0.6141,
+   "combos": 4
+  },
+  {
+   "class": [
+    11,
+    9,
+    1
+   ],
+   "label": "KJs",
+   "eq": 0.6119,
+   "combos": 4
+  },
+  {
+   "class": [
+    11,
+    9,
+    0
+   ],
+   "label": "KJo",
+   "eq": 0.6106,
+   "combos": 12
+  },
+  {
+   "class": [
+    12,
+    5,
+    1
+   ],
+   "label": "A7s",
+   "eq": 0.6086,
+   "combos": 4
+  },
+  {
+   "class": [
+    12,
+    7,
+    0
+   ],
+   "label": "A9o",
+   "eq": 0.6076,
+   "combos": 12
+  },
+  {
+   "class": [
+    12,
+    4,
+    1
+   ],
+   "label": "A6s",
+   "eq": 0.6052,
+   "combos": 4
+  },
+  {
+   "class": [
+    12,
+    6,
+    0
+   ],
+   "label": "A8o",
+   "eq": 0.6017,
+   "combos": 12
+  },
+  {
+   "class": [
+    12,
+    3,
+    1
+   ],
+   "label": "A5s",
+   "eq": 0.5995,
+   "combos": 4
+  },
+  {
+   "class": [
+    10,
+    8,
+    1
+   ],
+   "label": "QTs",
+   "eq": 0.5987,
+   "combos": 4
+  },
+  {
+   "class": [
+    11,
+    8,
+    0
+   ],
+   "label": "KTo",
+   "eq": 0.5967,
+   "combos": 12
+  },
+  {
+   "class": [
+    3,
+    3,
+    0
+   ],
+   "label": "55",
+   "eq": 0.5962,
+   "combos": 6
+  },
+  {
+   "class": [
+    11,
+    7,
+    0
+   ],
+   "label": "K9o",
+   "eq": 0.5955,
+   "combos": 12
+  },
+  {
+   "class": [
+    12,
+    5,
+    0
+   ],
+   "label": "A7o",
+   "eq": 0.5952,
+   "combos": 12
+  },
+  {
+   "class": [
+    11,
+    7,
+    1
+   ],
+   "label": "K9s",
+   "eq": 0.59,
+   "combos": 4
+  },
+  {
+   "class": [
+    10,
+    7,
+    1
+   ],
+   "label": "Q9s",
+   "eq": 0.5873,
+   "combos": 4
+  },
+  {
+   "class": [
+    11,
+    5,
+    1
+   ],
+   "label": "K7s",
+   "eq": 0.5871,
+   "combos": 4
+  },
+  {
+   "class": [
+    10,
+    6,
+    1
+   ],
+   "label": "Q8s",
+   "eq": 0.5838,
+   "combos": 4
+  },
+  {
+   "class": [
+    10,
+    9,
+    0
+   ],
+   "label": "QJo",
+   "eq": 0.5833,
+   "combos": 12
+  },
+  {
+   "class": [
+    12,
+    2,
+    1
+   ],
+   "label": "A4s",
+   "eq": 0.5813,
+   "combos": 4
+  },
+  {
+   "class": [
+    11,
+    6,
+    1
+   ],
+   "label": "K8s",
+   "eq": 0.5759,
+   "combos": 4
+  },
+  {
+   "class": [
+    12,
+    3,
+    0
+   ],
+   "label": "A5o",
+   "eq": 0.5749,
+   "combos": 12
+  },
+  {
+   "class": [
+    12,
+    2,
+    0
+   ],
+   "label": "A4o",
+   "eq": 0.5737,
+   "combos": 12
+  },
+  {
+   "class": [
+    12,
+    0,
+    1
+   ],
+   "label": "A2s",
+   "eq": 0.5729,
+   "combos": 4
+  },
+  {
+   "class": [
+    12,
+    1,
+    1
+   ],
+   "label": "A3s",
+   "eq": 0.5704,
+   "combos": 4
+  },
+  {
+   "class": [
+    2,
+    2,
+    0
+   ],
+   "label": "44",
+   "eq": 0.5647,
+   "combos": 6
+  },
+  {
+   "class": [
+    9,
+    7,
+    1
+   ],
+   "label": "J9s",
+   "eq": 0.5635,
+   "combos": 4
+  },
+  {
+   "class": [
+    12,
+    0,
+    0
+   ],
+   "label": "A2o",
+   "eq": 0.5615,
+   "combos": 12
+  },
+  {
+   "class": [
+    9,
+    8,
+    1
+   ],
+   "label": "JTs",
+   "eq": 0.5593,
+   "combos": 4
+  },
+  {
+   "class": [
+    12,
+    1,
+    0
+   ],
+   "label": "A3o",
+   "eq": 0.559,
+   "combos": 12
+  },
+  {
+   "class": [
+    11,
+    4,
+    0
+   ],
+   "label": "K6o",
+   "eq": 0.559,
+   "combos": 12
+  },
+  {
+   "class": [
+    12,
+    4,
+    0
+   ],
+   "label": "A6o",
+   "eq": 0.558,
+   "combos": 12
+  },
+  {
+   "class": [
+    11,
+    3,
+    1
+   ],
+   "label": "K5s",
+   "eq": 0.5563,
+   "combos": 4
+  },
+  {
+   "class": [
+    11,
+    5,
+    0
+   ],
+   "label": "K7o",
+   "eq": 0.5558,
+   "combos": 12
+  },
+  {
+   "class": [
+    10,
+    8,
+    0
+   ],
+   "label": "QTo",
+   "eq": 0.5548,
+   "combos": 12
+  },
+  {
+   "class": [
+    11,
+    4,
+    1
+   ],
+   "label": "K6s",
+   "eq": 0.5536,
+   "combos": 4
+  },
+  {
+   "class": [
+    11,
+    3,
+    0
+   ],
+   "label": "K5o",
+   "eq": 0.5533,
+   "combos": 12
+  },
+  {
+   "class": [
+    10,
+    7,
+    0
+   ],
+   "label": "Q9o",
+   "eq": 0.5533,
+   "combos": 12
+  },
+  {
+   "class": [
+    9,
+    7,
+    0
+   ],
+   "label": "J9o",
+   "eq": 0.5491,
+   "combos": 12
+  },
+  {
+   "class": [
+    1,
+    1,
+    0
+   ],
+   "label": "33",
+   "eq": 0.5489,
+   "combos": 6
+  },
+  {
+   "class": [
+    11,
+    2,
+    1
+   ],
+   "label": "K4s",
+   "eq": 0.5471,
+   "combos": 4
+  },
+  {
+   "class": [
+    10,
+    5,
+    1
+   ],
+   "label": "Q7s",
+   "eq": 0.5469,
+   "combos": 4
+  },
+  {
+   "class": [
+    11,
+    6,
+    0
+   ],
+   "label": "K8o",
+   "eq": 0.5399,
+   "combos": 12
+  },
+  {
+   "class": [
+    10,
+    3,
+    1
+   ],
+   "label": "Q5s",
+   "eq": 0.5394,
+   "combos": 4
+  },
+  {
+   "class": [
+    10,
+    6,
+    0
+   ],
+   "label": "Q8o",
+   "eq": 0.5384,
+   "combos": 12
+  },
+  {
+   "class": [
+    10,
+    4,
+    1
+   ],
+   "label": "Q6s",
+   "eq": 0.5362,
+   "combos": 4
+  },
+  {
+   "class": [
+    9,
+    8,
+    0
+   ],
+   "label": "JTo",
+   "eq": 0.5342,
+   "combos": 12
+  },
+  {
+   "class": [
+    8,
+    7,
+    1
+   ],
+   "label": "T9s",
+   "eq": 0.5325,
+   "combos": 4
+  },
+  {
+   "class": [
+    9,
+    6,
+    1
+   ],
+   "label": "J8s",
+   "eq": 0.5308,
+   "combos": 4
+  },
+  {
+   "class": [
+    11,
+    1,
+    0
+   ],
+   "label": "K3o",
+   "eq": 0.5288,
+   "combos": 12
+  },
+  {
+   "class": [
+    11,
+    1,
+    1
+   ],
+   "label": "K3s",
+   "eq": 0.5273,
+   "combos": 4
+  },
+  {
+   "class": [
+    10,
+    2,
+    1
+   ],
+   "label": "Q4s",
+   "eq": 0.5255,
+   "combos": 4
+  },
+  {
+   "class": [
+    11,
+    0,
+    1
+   ],
+   "label": "K2s",
+   "eq": 0.5228,
+   "combos": 4
+  },
+  {
+   "class": [
+    11,
+    0,
+    0
+   ],
+   "label": "K2o",
+   "eq": 0.5223,
+   "combos": 12
+  },
+  {
+   "class": [
+    9,
+    5,
+    1
+   ],
+   "label": "J7s",
+   "eq": 0.5206,
+   "combos": 4
+  },
+  {
+   "class": [
+    10,
+    5,
+    0
+   ],
+   "label": "Q7o",
+   "eq": 0.5171,
+   "combos": 12
+  },
+  {
+   "class": [
+    10,
+    3,
+    0
+   ],
+   "label": "Q5o",
+   "eq": 0.5166,
+   "combos": 12
+  },
+  {
+   "class": [
+    9,
+    6,
+    0
+   ],
+   "label": "J8o",
+   "eq": 0.5129,
+   "combos": 12
+  },
+  {
+   "class": [
+    9,
+    5,
+    0
+   ],
+   "label": "J7o",
+   "eq": 0.5119,
+   "combos": 12
+  },
+  {
+   "class": [
+    10,
+    0,
+    1
+   ],
+   "label": "Q2s",
+   "eq": 0.5112,
+   "combos": 4
+  },
+  {
+   "class": [
+    8,
+    6,
+    1
+   ],
+   "label": "T8s",
+   "eq": 0.5102,
+   "combos": 4
+  },
+  {
+   "class": [
+    10,
+    4,
+    0
+   ],
+   "label": "Q6o",
+   "eq": 0.5097,
+   "combos": 12
+  },
+  {
+   "class": [
+    8,
+    7,
+    0
+   ],
+   "label": "T9o",
+   "eq": 0.5082,
+   "combos": 12
+  },
+  {
+   "class": [
+    9,
+    3,
+    1
+   ],
+   "label": "J5s",
+   "eq": 0.5067,
+   "combos": 4
+  },
+  {
+   "class": [
+    7,
+    6,
+    0
+   ],
+   "label": "98o",
+   "eq": 0.5067,
+   "combos": 12
+  },
+  {
+   "class": [
+    10,
+    1,
+    1
+   ],
+   "label": "Q3s",
+   "eq": 0.5045,
+   "combos": 4
+  },
+  {
+   "class": [
+    9,
+    4,
+    1
+   ],
+   "label": "J6s",
+   "eq": 0.5037,
+   "combos": 4
+  },
+  {
+   "class": [
+    7,
+    6,
+    1
+   ],
+   "label": "98s",
+   "eq": 0.5037,
+   "combos": 4
+  },
+  {
+   "class": [
+    9,
+    2,
+    1
+   ],
+   "label": "J4s",
+   "eq": 0.5035,
+   "combos": 4
+  },
+  {
+   "class": [
+    11,
+    2,
+    0
+   ],
+   "label": "K4o",
+   "eq": 0.5025,
+   "combos": 12
+  },
+  {
+   "class": [
+    10,
+    2,
+    0
+   ],
+   "label": "Q4o",
+   "eq": 0.4936,
+   "combos": 12
+  },
+  {
+   "class": [
+    7,
+    5,
+    1
+   ],
+   "label": "97s",
+   "eq": 0.4936,
+   "combos": 4
+  },
+  {
+   "class": [
+    8,
+    5,
+    1
+   ],
+   "label": "T7s",
+   "eq": 0.4933,
+   "combos": 4
+  },
+  {
+   "class": [
+    8,
+    6,
+    0
+   ],
+   "label": "T8o",
+   "eq": 0.4918,
+   "combos": 12
+  },
+  {
+   "class": [
+    8,
+    5,
+    0
+   ],
+   "label": "T7o",
+   "eq": 0.4901,
+   "combos": 12
+  },
+  {
+   "class": [
+    8,
+    4,
+    1
+   ],
+   "label": "T6s",
+   "eq": 0.4901,
+   "combos": 4
+  },
+  {
+   "class": [
+    10,
+    0,
+    0
+   ],
+   "label": "Q2o",
+   "eq": 0.4866,
+   "combos": 12
+  },
+  {
+   "class": [
+    6,
+    5,
+    1
+   ],
+   "label": "87s",
+   "eq": 0.4861,
+   "combos": 4
+  },
+  {
+   "class": [
+    9,
+    3,
+    0
+   ],
+   "label": "J5o",
+   "eq": 0.4821,
+   "combos": 12
+  },
+  {
+   "class": [
+    8,
+    4,
+    0
+   ],
+   "label": "T6o",
+   "eq": 0.4814,
+   "combos": 12
+  },
+  {
+   "class": [
+    10,
+    1,
+    0
+   ],
+   "label": "Q3o",
+   "eq": 0.4782,
+   "combos": 12
+  },
+  {
+   "class": [
+    9,
+    1,
+    1
+   ],
+   "label": "J3s",
+   "eq": 0.4754,
+   "combos": 4
+  },
+  {
+   "class": [
+    0,
+    0,
+    0
+   ],
+   "label": "22",
+   "eq": 0.4754,
+   "combos": 6
+  },
+  {
+   "class": [
+    9,
+    0,
+    1
+   ],
+   "label": "J2s",
+   "eq": 0.4735,
+   "combos": 4
+  },
+  {
+   "class": [
+    6,
+    4,
+    1
+   ],
+   "label": "86s",
+   "eq": 0.4732,
+   "combos": 4
+  },
+  {
+   "class": [
+    7,
+    4,
+    1
+   ],
+   "label": "96s",
+   "eq": 0.473,
+   "combos": 4
+  },
+  {
+   "class": [
+    8,
+    1,
+    1
+   ],
+   "label": "T3s",
+   "eq": 0.4712,
+   "combos": 4
+  },
+  {
+   "class": [
+    9,
+    4,
+    0
+   ],
+   "label": "J6o",
+   "eq": 0.4665,
+   "combos": 12
+  },
+  {
+   "class": [
+    8,
+    2,
+    1
+   ],
+   "label": "T4s",
+   "eq": 0.4653,
+   "combos": 4
+  },
+  {
+   "class": [
+    9,
+    2,
+    0
+   ],
+   "label": "J4o",
+   "eq": 0.4581,
+   "combos": 12
+  },
+  {
+   "class": [
+    5,
+    3,
+    1
+   ],
+   "label": "75s",
+   "eq": 0.4561,
+   "combos": 4
+  },
+  {
+   "class": [
+    8,
+    3,
+    1
+   ],
+   "label": "T5s",
+   "eq": 0.4549,
+   "combos": 4
+  },
+  {
+   "class": [
+    6,
+    5,
+    0
+   ],
+   "label": "87o",
+   "eq": 0.4549,
+   "combos": 12
+  },
+  {
+   "class": [
+    8,
+    0,
+    1
+   ],
+   "label": "T2s",
+   "eq": 0.4534,
+   "combos": 4
+  },
+  {
+   "class": [
+    7,
+    3,
+    1
+   ],
+   "label": "95s",
+   "eq": 0.4519,
+   "combos": 4
+  },
+  {
+   "class": [
+    8,
+    3,
+    0
+   ],
+   "label": "T5o",
+   "eq": 0.4454,
+   "combos": 12
+  },
+  {
+   "class": [
+    7,
+    1,
+    1
+   ],
+   "label": "93s",
+   "eq": 0.4452,
+   "combos": 4
+  },
+  {
+   "class": [
+    5,
+    4,
+    1
+   ],
+   "label": "76s",
+   "eq": 0.4447,
+   "combos": 4
+  },
+  {
+   "class": [
+    6,
+    4,
+    0
+   ],
+   "label": "86o",
+   "eq": 0.4427,
+   "combos": 12
+  },
+  {
+   "class": [
+    7,
+    2,
+    1
+   ],
+   "label": "94s",
+   "eq": 0.4422,
+   "combos": 4
+  },
+  {
+   "class": [
+    7,
+    5,
+    0
+   ],
+   "label": "97o",
+   "eq": 0.442,
+   "combos": 12
+  },
+  {
+   "class": [
+    9,
+    1,
+    0
+   ],
+   "label": "J3o",
+   "eq": 0.4405,
+   "combos": 12
+  },
+  {
+   "class": [
+    6,
+    3,
+    1
+   ],
+   "label": "85s",
+   "eq": 0.4363,
+   "combos": 4
+  },
+  {
+   "class": [
+    7,
+    3,
+    0
+   ],
+   "label": "95o",
+   "eq": 0.4345,
+   "combos": 12
+  },
+  {
+   "class": [
+    9,
+    0,
+    0
+   ],
+   "label": "J2o",
+   "eq": 0.4335,
+   "combos": 12
+  },
+  {
+   "class": [
+    8,
+    2,
+    0
+   ],
+   "label": "T4o",
+   "eq": 0.433,
+   "combos": 12
+  },
+  {
+   "class": [
+    7,
+    0,
+    1
+   ],
+   "label": "92s",
+   "eq": 0.4328,
+   "combos": 4
+  },
+  {
+   "class": [
+    7,
+    4,
+    0
+   ],
+   "label": "96o",
+   "eq": 0.4296,
+   "combos": 12
+  },
+  {
+   "class": [
+    4,
+    3,
+    1
+   ],
+   "label": "65s",
+   "eq": 0.4293,
+   "combos": 4
+  },
+  {
+   "class": [
+    3,
+    2,
+    1
+   ],
+   "label": "54s",
+   "eq": 0.4211,
+   "combos": 4
+  },
+  {
+   "class": [
+    7,
+    2,
+    0
+   ],
+   "label": "94o",
+   "eq": 0.4187,
+   "combos": 12
+  },
+  {
+   "class": [
+    4,
+    2,
+    1
+   ],
+   "label": "64s",
+   "eq": 0.4187,
+   "combos": 4
+  },
+  {
+   "class": [
+    6,
+    2,
+    1
+   ],
+   "label": "84s",
+   "eq": 0.4172,
+   "combos": 4
+  },
+  {
+   "class": [
+    4,
+    3,
+    0
+   ],
+   "label": "65o",
+   "eq": 0.4169,
+   "combos": 12
+  },
+  {
+   "class": [
+    8,
+    0,
+    0
+   ],
+   "label": "T2o",
+   "eq": 0.4167,
+   "combos": 12
+  },
+  {
+   "class": [
+    8,
+    1,
+    0
+   ],
+   "label": "T3o",
+   "eq": 0.4164,
+   "combos": 12
+  },
+  {
+   "class": [
+    6,
+    1,
+    1
+   ],
+   "label": "83s",
+   "eq": 0.4162,
+   "combos": 4
+  },
+  {
+   "class": [
+    6,
+    3,
+    0
+   ],
+   "label": "85o",
+   "eq": 0.4147,
+   "combos": 12
+  },
+  {
+   "class": [
+    5,
+    2,
+    1
+   ],
+   "label": "74s",
+   "eq": 0.4147,
+   "combos": 4
+  },
+  {
+   "class": [
+    5,
+    4,
+    0
+   ],
+   "label": "76o",
+   "eq": 0.4142,
+   "combos": 12
+  },
+  {
+   "class": [
+    5,
+    3,
+    0
+   ],
+   "label": "75o",
+   "eq": 0.4097,
+   "combos": 12
+  },
+  {
+   "class": [
+    3,
+    2,
+    0
+   ],
+   "label": "54o",
+   "eq": 0.4033,
+   "combos": 12
+  },
+  {
+   "class": [
+    6,
+    2,
+    0
+   ],
+   "label": "84o",
+   "eq": 0.402,
+   "combos": 12
+  },
+  {
+   "class": [
+    5,
+    0,
+    1
+   ],
+   "label": "72s",
+   "eq": 0.4013,
+   "combos": 4
+  },
+  {
+   "class": [
+    7,
+    0,
+    0
+   ],
+   "label": "92o",
+   "eq": 0.3991,
+   "combos": 12
+  },
+  {
+   "class": [
+    5,
+    1,
+    1
+   ],
+   "label": "73s",
+   "eq": 0.3948,
+   "combos": 4
+  },
+  {
+   "class": [
+    5,
+    2,
+    0
+   ],
+   "label": "74o",
+   "eq": 0.3929,
+   "combos": 12
+  },
+  {
+   "class": [
+    6,
+    0,
+    1
+   ],
+   "label": "82s",
+   "eq": 0.3911,
+   "combos": 4
+  },
+  {
+   "class": [
+    3,
+    1,
+    1
+   ],
+   "label": "53s",
+   "eq": 0.3891,
+   "combos": 4
+  },
+  {
+   "class": [
+    3,
+    0,
+    1
+   ],
+   "label": "52s",
+   "eq": 0.3886,
+   "combos": 4
+  },
+  {
+   "class": [
+    4,
+    1,
+    1
+   ],
+   "label": "63s",
+   "eq": 0.3867,
+   "combos": 4
+  },
+  {
+   "class": [
+    3,
+    1,
+    0
+   ],
+   "label": "53o",
+   "eq": 0.3805,
+   "combos": 12
+  },
+  {
+   "class": [
+    7,
+    1,
+    0
+   ],
+   "label": "93o",
+   "eq": 0.3795,
+   "combos": 12
+  },
+  {
+   "class": [
+    4,
+    2,
+    0
+   ],
+   "label": "64o",
+   "eq": 0.3772,
+   "combos": 12
+  },
+  {
+   "class": [
+    6,
+    0,
+    0
+   ],
+   "label": "82o",
+   "eq": 0.3738,
+   "combos": 12
+  },
+  {
+   "class": [
+    6,
+    1,
+    0
+   ],
+   "label": "83o",
+   "eq": 0.372,
+   "combos": 12
+  },
+  {
+   "class": [
+    2,
+    0,
+    1
+   ],
+   "label": "42s",
+   "eq": 0.3698,
+   "combos": 4
+  },
+  {
+   "class": [
+    5,
+    1,
+    0
+   ],
+   "label": "73o",
+   "eq": 0.3695,
+   "combos": 12
+  },
+  {
+   "class": [
+    2,
+    1,
+    1
+   ],
+   "label": "43s",
+   "eq": 0.3673,
+   "combos": 4
+  },
+  {
+   "class": [
+    4,
+    0,
+    1
+   ],
+   "label": "62s",
+   "eq": 0.3671,
+   "combos": 4
+  },
+  {
+   "class": [
+    4,
+    0,
+    0
+   ],
+   "label": "62o",
+   "eq": 0.3586,
+   "combos": 12
+  },
+  {
+   "class": [
+    2,
+    1,
+    0
+   ],
+   "label": "43o",
+   "eq": 0.3576,
+   "combos": 12
+  },
+  {
+   "class": [
+    5,
+    0,
+    0
+   ],
+   "label": "72o",
+   "eq": 0.3527,
+   "combos": 12
+  },
+  {
+   "class": [
+    4,
+    1,
+    0
+   ],
+   "label": "63o",
+   "eq": 0.3527,
+   "combos": 12
+  },
+  {
+   "class": [
+    1,
+    0,
+    1
+   ],
+   "label": "32s",
+   "eq": 0.3519,
+   "combos": 4
+  },
+  {
+   "class": [
+    3,
+    0,
+    0
+   ],
+   "label": "52o",
+   "eq": 0.3425,
+   "combos": 12
+  },
+  {
+   "class": [
+    2,
+    0,
+    0
+   ],
+   "label": "42o",
+   "eq": 0.3385,
+   "combos": 12
+  },
+  {
+   "class": [
+    1,
+    0,
+    0
+   ],
+   "label": "32o",
+   "eq": 0.3182,
+   "combos": 12
+  }
+ ]
+}

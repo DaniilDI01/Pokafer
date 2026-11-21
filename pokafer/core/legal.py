@@ -57,7 +57,7 @@ def legal_actions(snap: Snapshot) -> list[LegalAction]:
             raw = [
                 min_raise_to,
                 max_bet * 2.5,
-                max_bet + pot_base + to_call,  # «рейз размером с банк»
+                max_bet + snap.pot + to_call,  # «рейз размером с банк»: банк после нашего колла
             ]
         seen: list[float] = []
         for amt in sorted(raw):

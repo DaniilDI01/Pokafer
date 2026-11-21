@@ -16,6 +16,7 @@ class RandomStrategy(Strategy):
         pass  # rng не используется, сигнатура единая для всех стратегий
 
     def distribution(
-        self, snap: Snapshot, legal: list[LegalAction]
-    ) -> dict[str, float]:
+        self, snap: Snapshot, legal: list[LegalAction],
+        profiles: dict[str, dict] | None = None,
+    ) -> dict[str, float]:  # профили не используются — калибровка
         return normalize({la.key: 1.0 for la in legal})

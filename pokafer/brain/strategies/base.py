@@ -19,9 +19,14 @@ class Strategy(ABC):
 
     @abstractmethod
     def distribution(
-        self, snap: Snapshot, legal: list[LegalAction]
+        self, snap: Snapshot, legal: list[LegalAction],
+        profiles: dict[str, dict] | None = None,
     ) -> dict[str, float]:
-        """Смешанная стратегия: {action_key: вероятность}. Сумма ~1."""
+        """Смешанная стратегия: {action_key: вероятность}. Сумма ~1.
+
+        profiles — накопленная статистика оппонентов ({имя: {vpip, pfr, af,
+        fold_vs_bet, hands}}), которую платформа передаёт по желанию.
+        Стратегия сама ничего не хранит и не собирает."""
 
     def explain(
         self, snap: Snapshot, legal: list[LegalAction], dist: dict[str, float]

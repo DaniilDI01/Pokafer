@@ -100,9 +100,15 @@ curl -s localhost:8000/v1/decide -H 'Content-Type: application/json' \
 |---|---|---|
 | `random` | ✅ | равномерная — калибровка арены |
 | `heuristic` | ✅ | пот-оддсы + смешанные блефы (демо-соперник) |
-| `gto_blueprint` | 🔜 | MCCFR-блюпринт NLHE (CPU, рецепт Pluribus) |
+| `micro` | ✅ | эксплойт под микролимиты (наследник heuristic) |
+| `fish` | ✅ | синтетическая «рыба» — мишень для эксплойта |
+| `equity` | ✅ | **equity-машина (уровень 1)**: MC-эквити vs диапазону, пот-оддсы, SPR, позиция, стеки, статистика соперников |
+| `gto_blueprint` | 🔜 | MCCFR-блюпринт NLHE (фундамент — `core/abstraction.py` — готов) |
 | `nn_value` | 🔜 | value-сеть + depth-limited solving (рецепт DeepStack) |
 | `opponent_model` | 🔜 | GRU/трансформер на историях действий — эксплойт-слой |
+
+Решения и требования проекта зафиксированы в [docs/DECISIONS.md](docs/DECISIONS.md)
+(цель, гибридная схема GTO, локальность, модульность).
 
 ## Данные
 
@@ -112,10 +118,13 @@ curl -s localhost:8000/v1/decide -H 'Content-Type: application/json' \
 
 ## Ограничения v1 (осознанные)
 
-- сайд-поты не считаются (весь банк — лучшей руке); для HU-демо не критично;
 - анте не раздаётся (поле в схеме зарезервировано);
 - парсер PokerNow ждёт реальный экспорт для сверки формата (см. докстринг
-  `pokafer/adapters/pokernow_csv.py`).
+  `pokafer/adapters/pokernow_csv.py`);
+- боты веб-стола без памяти об оппонентах (в CLI-режиме память есть).
+
+Сайд-поты, сплит-поты и возврат непокрытых ставок реализованы и покрыты
+тестами (`tests/test_engine.py`).
 
 ## ROADMAP
 

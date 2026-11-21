@@ -130,18 +130,20 @@ def run_benchmark(config: dict) -> dict:
     for st in seats_cfg.values():
         seats_per[st] += 1
 
-    brains = {seat: Brain(st) for seat, st in seats_cfg.items()}
+    # мозги сидируются от config seed: тот же конфиг -> тот же прогон
+    brains = {seat: Brain(st, seed=rng.randrange(2**31))
+              for seat, st in seats_cfg.items()}
     totals = {s: 0.0 for s in strategies}
     per_hand = {s: [] for s in strategies}
     total_chips = stack * n
     t0 = time.perf_counter()
-    integrity_ok = True
 
     logger.info("старт: %d мест [%s], %d рук, seed=%s, стек %.0f bb",
                 n, ", ".join(f"{s}×{seats_per[s]}" for s in strategies), hands, seed, stack / BB)
 
+    seats_order = sorted(seats_cfg)
     for h in range(hands):
-        button = h % n + 1  # кнопка по кругу: всем поровну, смещения нет
+        button = seats_order[h % n]  # кнопка по кругу: всем поровну, смещения нет
         deck_seed = rng.randrange(2**31)
         engine = HandEngine(
             seat_stacks={seat: stack for seat in seats_cfg},
@@ -165,9 +167,9 @@ def run_benchmark(config: dict) -> dict:
                 check_invariants(engine, total_chips,
                                  f"рука {h}, действие #{len(engine.actions)}")
         except IntegrityError as e:
+            # нарушение прерывает прогон: результата не будет, только дамп
             path = dump_crash(engine, h, deck_seed, str(e))
             logger.critical("ИНТЕГРИВНОСТЬ НАРУШЕНА: %s | дамп: %s", e, path)
-            integrity_ok = False
             raise
         final = sum(s.stack for s in engine.seats.values())
         if abs(final - total_chips) > 1e-6:
@@ -209,23 +211,28 @@ def run_benchmark(config: dict) -> dict:
         "seconds": round(dt, 2),
         "hands_per_sec": round(hands / dt, 1),
         "seed": seed,
-        "integrity": "ok" if integrity_ok else "FAILED",
+        # нарушение целостности прерывает прогон (raise), поэтому у записанного
+        # результата она всегда ok
+        "integrity": "ok",
         "stats": stats,
         "series": {s: _downsample(per_hand[s]) for s in strategies},
     }
-    logger.info("финиш: %d рук за %.1f с, целостность: %s", hands, dt,
-                "ok" if integrity_ok else "FAILED")
+    logger.info("финиш: %d рук за %.1f с, целостность: ok", hands, dt)
     return result
 
 
 def _downsample(xs: list[float], limit: int = 1200) -> list[float]:
     step = max(1, len(xs) // limit)
     out, acc = [], 0.0
+    last = len(xs) - 1
+    last_emitted = -1
     for i, x in enumerate(xs):
         acc += x
         if i % step == 0:
             out.append(round(acc, 2))
-    out.append(round(acc, 2))
+            last_emitted = i
+    if last_emitted != last:  # финальная точка, если последний бакет не совпал с ней
+        out.append(round(acc, 2))
     return out
 
 

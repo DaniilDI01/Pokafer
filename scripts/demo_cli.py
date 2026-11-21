@@ -228,6 +228,7 @@ def play_hand(args, brain: Brain | None, stacks: dict[int, float], button: int, 
         button_seat=button,
         sb=args.sb,
         bb=args.bb,
+        seed=None if args.seed is None else args.seed + hand_no,  # --seed сидирует и колоду
         hand_id=f"h{hand_no:04d}",
         table_id="demo-table",
     )
@@ -258,6 +259,8 @@ def play_hand(args, brain: Brain | None, stacks: dict[int, float], button: int, 
                 except ValueError as e:
                     print(f"   !! {e}")
         else:
+            if brain is not None:
+                brain.observe(snap)  # демо-платформа кормит память мозга
             d = decide(args, brain, snap)
             print(paint(
                 f"   ▶ Мозг: {human_action(d['decision'])}"

@@ -16,16 +16,22 @@ class InMemoryProfileStore:
     def __init__(self) -> None:
         # последняя (самая полная) версия снапшота по (table_id, hand_id)
         self._hands: dict[tuple[str, str], Snapshot] = {}
+        self._dirty = True  # профили пересчитываются только после новых данных
+        self._profiles: dict[str, dict] | None = None
 
     def observe(self, snap: Snapshot) -> None:
         key = (snap.table_id, snap.hand_id)
         prev = self._hands.get(key)
         if prev is None or len(snap.actions) >= len(prev.actions):
             self._hands[key] = snap
+            self._dirty = True
 
     def profiles(self) -> dict[str, dict]:
-        """{имя игрока: {vpip, pfr, af, fold_vs_bet, hands}}."""
-        return stats_from_snapshots(self._hands.values())
+        """{имя игрока: {vpip, pfr, af, fold_vs_bet, hands}} (кэш до новых данных)."""
+        if self._dirty or self._profiles is None:
+            self._profiles = stats_from_snapshots(self._hands.values())
+            self._dirty = False
+        return self._profiles
 
     def profile(self, name: str) -> dict | None:
         return self.profiles().get(name)

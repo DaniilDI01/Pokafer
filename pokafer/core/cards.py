@@ -99,6 +99,95 @@ def evaluate7(cards: list[int]) -> tuple[int, ...]:
     return max(_evaluate5(c) for c in combinations(cards, 5))
 
 
+def _straight_high(mask: int) -> int:
+    """Старшая карта стрита по битовому маску рангов; 0 если стрита нет."""
+    for hi in range(12, 3, -1):
+        w = 0b11111 << (hi - 4)
+        if mask & w == w:
+            return hi
+    # колесо A-2-3-4-5: ранги 2,3,4,5 (биты 0..3) + туз (бит 12)
+    if mask & 0b1111 == 0b1111 and mask & (1 << 12):
+        return 3
+    return 0
+
+
+def evaluate7_fast(cards: list[int]) -> tuple[int, ...]:
+    """Быстрый оценщик 5..7 карт: одна проходка вместо 21 комбинации.
+
+    Результат СОВПАДАЕТ с evaluate7 (проверяется тестом) — предназначен
+    для Монте-Карло-выбросов, где важна скорость. Категории те же: 8
+    стрит-флеш ... 0 старшая карта.
+    """
+    rank_counts = [0] * 13
+    suit_masks = [0, 0, 0, 0]
+    for c in cards:
+        r, su = divmod(c, 4)
+        rank_counts[r] += 1
+        suit_masks[su] |= 1 << r
+
+    all_ranks_mask = 0
+    for r in range(13):
+        if rank_counts[r]:
+            all_ranks_mask |= 1 << r
+
+    flush_suit = -1
+    for su in range(4):
+        m = suit_masks[su]
+        if bin(m).count("1") >= 5:
+            flush_suit = su
+            break
+
+    if flush_suit >= 0:
+        fm = suit_masks[flush_suit]
+        sf_high = _straight_high(fm)
+        if sf_high:
+            return (8, sf_high)
+        flush_ranks = [
+            r for r in range(12, -1, -1) if fm & (1 << r)
+        ][:5]
+        return (5,) + tuple(flush_ranks)
+
+    # каре / фулл-хаус / тройка / пары — по счётчикам рангов
+    quads = [r for r in range(13) if rank_counts[r] == 4]
+    trips = [r for r in range(13) if rank_counts[r] == 3]
+    pairs = [r for r in range(13) if rank_counts[r] == 2]
+    singles = [r for r in range(13) if rank_counts[r] == 1]
+
+    if quads:
+        q = quads[0]
+        kickers = [r for r in range(12, -1, -1) if r != q and rank_counts[r]]
+        return (7, q, kickers[0])
+
+    if trips and (pairs or len(trips) > 1):
+        t = trips[-1]
+        p = max(pairs[-1] if pairs else -1, trips[0] if len(trips) > 1 else -1)
+        return (6, t, p)
+
+    st = _straight_high(all_ranks_mask)
+    if st:
+        return (4, st)
+
+    if trips:
+        t = trips[0]
+        kickers = [r for r in range(12, -1, -1) if r != t and rank_counts[r]][:2]
+        return (3, t) + tuple(kickers)
+
+    if len(pairs) >= 2:
+        p_hi, p_lo = pairs[-1], pairs[-2]
+        kickers = [r for r in range(12, -1, -1)
+                   if rank_counts[r] and r != p_hi and r != p_lo][:1]
+        return (2, p_hi, p_lo) + tuple(kickers)
+
+    if pairs:
+        p = pairs[0]
+        kickers = [r for r in range(12, -1, -1)
+                   if r != p and rank_counts[r]][:3]
+        return (1, p) + tuple(kickers)
+
+    return (0,) + tuple(sorted((r for r in range(13) if rank_counts[r]),
+                               reverse=True)[:5])
+
+
 def hand_name(score: tuple[int, ...]) -> str:
     """Человекочитаемое имя комбинации."""
     cat = score[0]

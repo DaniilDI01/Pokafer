@@ -52,17 +52,25 @@ class Brain:
 
     # ---------- принятие решения ----------
 
-    def decide(self, snap: Snapshot) -> Decision:
+    def decide(self, snap: Snapshot, profiles: dict[str, dict] | None = None) -> Decision:
+        """Snapshot (+ опц. профили оппонентов) -> Decision.
+
+        Мозг чистый: состояние приходит в аргументах. Если profiles не
+        переданы, но платформа инъецировала память (memory), профили
+        читаются из неё; хранит и собирает их — платформа, не мозг.
+        """
         t0 = time.perf_counter()
         legal = legal_actions(snap)
-        dist = self.strategy.distribution(snap, legal)
+        if profiles is None and self.memory is not None:
+            profiles = self.opponent_profiles(snap) or None
+        dist = self.strategy.distribution(snap, legal, profiles)
         chosen = self._sample(dist, legal)
 
         reasoning = self.strategy.explain(snap, legal, dist)
-        opp = self.opponent_profiles(snap)
-        if opp:
+        if profiles:
             hints = "; ".join(
-                f"{n}: VPIP {p['vpip']:.0%}" for n, p in opp.items() if p.get("hands")
+                f"{n}: VPIP {p['vpip']:.0%}"
+                for n, p in profiles.items() if p.get("hands")
             )
             if hints:
                 reasoning = f"{reasoning} | память: {hints}"
@@ -78,13 +86,19 @@ class Brain:
         )
 
     def decide_json(self, payload: dict | str | bytes) -> dict:
-        """JSON на входе -> JSON на выходе (главный режим для интеграций)."""
+        """JSON на входе -> JSON на выходе (главный режим для интеграций).
+
+        Формат: {"snapshot": {...}, "context": {"profiles": {...}}?} —
+        context опционален; мозг не собирает статистику сам.
+        """
         if isinstance(payload, (str, bytes)):
             payload = json.loads(payload)
         if not isinstance(payload, dict):
             raise ValueError("Ожидался JSON-объект снапшота")
         snap = Snapshot.model_validate(payload.get("snapshot", payload))
-        decision = self.decide(snap)
+        ctx = payload.get("context") or {}
+        profiles = ctx.get("profiles")
+        decision = self.decide(snap, profiles=profiles)
         out = decision.model_dump()
         out["decision"] = decision.key()
         return out

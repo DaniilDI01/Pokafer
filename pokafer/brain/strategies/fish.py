@@ -30,7 +30,8 @@ class FishStrategy(Strategy):
         self._last_note = ""
 
     def distribution(
-        self, snap: Snapshot, legal: list[LegalAction]
+        self, snap: Snapshot, legal: list[LegalAction],
+        profiles: dict[str, dict] | None = None,
     ) -> dict[str, float]:
         by_key = {la.key: la for la in legal}
         s, note = hand_strength(snap)

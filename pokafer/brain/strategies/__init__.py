@@ -2,13 +2,13 @@
 from __future__ import annotations
 
 from pokafer.brain.strategies.base import Strategy
+from pokafer.brain.strategies.equity import EquityStrategy
 from pokafer.brain.strategies.fish import FishStrategy
 from pokafer.brain.strategies.heuristic import HeuristicStrategy
 from pokafer.brain.strategies.micro import MicroExploitStrategy
 from pokafer.brain.strategies.random_strategy import RandomStrategy
 
 _REGISTRY: dict[str, type[Strategy]] = {}
-_INSTANCES: dict[str, Strategy] = {}
 
 
 def register(cls: type[Strategy]) -> type[Strategy]:
@@ -21,13 +21,12 @@ def available() -> dict[str, str]:
 
 
 def get(name: str, **kwargs) -> Strategy:
+    """Новый экземпляр на каждый вызов: у каждого мозга свой RNG."""
     if name not in _REGISTRY:
         raise KeyError(f"Неизвестная стратегия {name!r}. Доступны: {sorted(_REGISTRY)}")
-    key = f"{name}:{sorted(kwargs.items())}"
-    if key not in _INSTANCES:
-        _INSTANCES[key] = _REGISTRY[name](**kwargs)
-    return _INSTANCES[key]
+    return _REGISTRY[name](**kwargs)
 
 
-for _cls in (RandomStrategy, HeuristicStrategy, FishStrategy, MicroExploitStrategy):
+for _cls in (RandomStrategy, HeuristicStrategy, FishStrategy, MicroExploitStrategy,
+             EquityStrategy):
     register(_cls)

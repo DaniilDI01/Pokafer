@@ -11,7 +11,7 @@
   log/error — служебные сообщения
 клиент -> сервер:
   action    {action: fold|check|call|bet|raise, amount?: float}
-  new_hand  — сдать следующую руку немедленно (иначе автосдача по таймеру)
+  new_hand  — сдать следующую руку (только вручную; автосдачи нет)
   hint      — попросить подсказку
   strategy  {name} — сменить стратегию единственного бота (совместимость)
   configure {bots: [...]} — пересобрать стол: список ботов и их стратегии
@@ -27,6 +27,7 @@ from fastapi.staticfiles import StaticFiles
 
 from pokafer.adapters.replay_file import ReplayFile
 from pokafer.brain.api import Brain
+from pokafer.brain.memory import InMemoryProfileStore
 from pokafer.brain.strategies import available as strategies_available
 from pokafer.core.engine import HandEngine
 
@@ -64,22 +65,23 @@ class TableSession:
         self.names: dict[int, str] = {}
         self.bot_strategy: dict[int, str] = {}  # seat -> стратегия
         self.button = 0
+        self._seed = seed
         self.set_bots(bots if bots is not None else [
             {"name": "Мозг", "strategy": strategy}
         ])
-        self._seed = seed
         self._reveal: dict[int, list[str]] = {}  # карты шоудауна — не прячем до след. руки
         self._start_hand()
 
     # ---------- конфигурация ----------
 
     def set_bots(self, bots: list[dict]) -> None:
+        """Пересобрать стол. Валидация до мутации: при ошибке сессия не портится."""
         if not 1 <= len(bots) <= MAX_BOTS:
             raise ValueError(f"ботов должно быть от 1 до {MAX_BOTS}")
         known = strategies_available()
+        names: dict[int, str] = {HERO: HERO_NAME}
+        bot_strategy: dict[int, str] = {}
         names_seen: set[str] = set()
-        self.names = {HERO: HERO_NAME}
-        self.bot_strategy = {}
         for i, b in enumerate(bots, start=2):
             strategy = b.get("strategy", "heuristic")
             if strategy not in known:
@@ -88,11 +90,24 @@ class TableSession:
             while name in names_seen:
                 name += "*"
             names_seen.add(name)
-            self.names[i] = name
-            self.bot_strategy[i] = strategy
-        self.stacks = {s: START_STACK for s in self.names}
+            names[i] = name
+            bot_strategy[i] = strategy
+
+        # применяем всё разом: имена, стратегии, стеки, мозги, кнопка заново
+        self.names = names
+        self.bot_strategy = bot_strategy
+        self.stacks = {s: START_STACK for s in names}
         self.button = 0
         self._reveal = {}
+        first_bot = min(bot_strategy)
+        # память инъецируется платформой: боты наблюдают раздачу и (если
+        # стратегия это умеет) подстраиваются под соперников в живой игре
+        self.brains = {
+            seat: Brain(strategy, seed=self._seed, memory=InMemoryProfileStore())
+            for seat, strategy in bot_strategy.items()
+        }
+        # подсказка герою — отдельный мозг (не тратит RNG ботов)
+        self.hint_brain = Brain(bot_strategy[first_bot], seed=self._seed)
 
     def _start_hand(self) -> None:
         if min(self.stacks.values()) <= 0:
@@ -111,10 +126,6 @@ class TableSession:
             hand_id=f"web-{self.hand_no:04d}",
             table_id="web-table",
         )
-        self.brains = {
-            seat: Brain(strategy, seed=self._seed)
-            for seat, strategy in self.bot_strategy.items()
-        }
 
     # ---------- вид для клиента ----------
 
@@ -182,6 +193,7 @@ class TableSession:
         seat = e.actor_seat
         brain = self.brains[seat]
         snap = e.snapshot_for(seat)
+        brain.observe(snap)  # платформа кормит память бота (он ничего не собирает сам)
         d = brain.decide(snap)
         e.apply(d.action, d.amount_to)
         if self.record_path:
@@ -282,8 +294,7 @@ def create_table_app(default_strategy: str = "heuristic",
                     await advance_bot()
                 elif mtype == "hint":
                     snap = session.engine.snapshot_for(HERO)
-                    d = session.brains[next(iter(session.brains))].decide(snap) \
-                        if session.brains else None
+                    d = session.hint_brain.decide(snap)
                     if d is not None:
                         await ws.send_json({
                             "type": "hint",

@@ -115,8 +115,9 @@ class HeuristicStrategy(Strategy):
         self._last_note = ""
 
     def distribution(
-        self, snap: Snapshot, legal: list[LegalAction]
-    ) -> dict[str, float]:
+        self, snap: Snapshot, legal: list[LegalAction],
+        profiles: dict[str, dict] | None = None,
+    ) -> dict[str, float]:  # профили не используются — бейзлайн
         p = self.PARAMS
         by_key = {la.key: la for la in legal}
         s, note = hand_strength(snap)
@@ -176,14 +177,20 @@ class HeuristicStrategy(Strategy):
         return f"{self._last_note}; топ-действие {top[0]} ({top[1]:.0%})"
 
     def _pick_sizing(self, bets: list[LegalAction], tier: int) -> str:
-        """tier: 0=min, 1=средний, 2=максимальный из меню (с рандомизацией ±1)."""
+        """tier: 0=min, 1=средний, 2=максимальный из меню (с рандомизацией ±1).
+
+        Олл-ин (последний элемент меню) в тиры не входит: иначе случайный
+        джиттер превращал бы обычные велью-ставки в пуш (~30% случаев).
+        Олл-ин остаётся в меню и доступен стратегиям явно.
+        """
         if not bets:
             return "check"
+        menu = bets[:-1] or bets  # если олл-ин — единственный размер, берём его
         i = min(
-            len(bets) - 1,
+            len(menu) - 1,
             max(0, tier + self.PARAMS["size_bias"] + self.rng.choice((-1, 0, 1))),
         )
-        return bets[i].key
+        return menu[i].key
 
     @staticmethod
     def _is_late_position(snap: Snapshot) -> bool:

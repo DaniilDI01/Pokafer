@@ -4,25 +4,26 @@
     python scripts/arena.py --a heuristic --b random --hands 20000
 
 Выводит винрейт A в bb/100 (винрейт B = с обратным знаком), скорость раздач/сек
-и 95%-доверительный интервал (дисперсия HU NLHE ~90 bb/100).
+и 95%-доверительный интервал по ФАКТИЧЕСКОЙ дисперсии этого матча
+(спарринги с «рыбой» устроены заметно тише/шумнее, чем игра двух сильных мозгов).
 """
 from __future__ import annotations
 
 import argparse
+import math
 import random
 import time
 
 from pokafer.brain.api import Brain
 from pokafer.core.engine import HandEngine
 
-# эмпирическая дисперсия HU NLHE на 100bb-стеках (bb на 100 рук)
-HU_STD_BB100 = 90.0
+Z = 1.96  # 95%
 
 
-def run_match(a: Brain, b: Brain, hands: int, sb: float, bb: float, stacks: float, seed: int) -> float:
-    """Возвращает суммарный выигрыш A в больших блайндах."""
+def run_match(a: Brain, b: Brain, hands: int, sb: float, bb: float, stacks: float, seed: int) -> list[float]:
+    """Разыгрывает матч, возвращает выигрыш A за каждую руку (в больших блайндах)."""
     rng = random.Random(seed)
-    total = 0.0
+    per_hand: list[float] = []
     for i in range(hands):
         button = 1 if i % 2 == 0 else 2  # чередуем кнопку для честности
         engine = HandEngine(
@@ -44,8 +45,8 @@ def run_match(a: Brain, b: Brain, hands: int, sb: float, bb: float, stacks: floa
             brain = a if seat == 1 else b
             d = brain.decide(engine.snapshot_for(seat))
             engine.apply(d.action, d.amount_to)
-        total += (engine.seats[1].stack - stacks) / bb
-    return total
+        per_hand.append((engine.seats[1].stack - stacks) / bb)
+    return per_hand
 
 
 def main() -> None:
@@ -63,14 +64,22 @@ def main() -> None:
     b = Brain(args.b, seed=args.seed + 1)
 
     t0 = time.perf_counter()
-    total_bb = run_match(a, b, args.hands, args.sb, args.bb, args.stacks, args.seed)
+    per_hand = run_match(a, b, args.hands, args.sb, args.bb, args.stacks, args.seed)
     dt = time.perf_counter() - t0
 
-    wr = total_bb / args.hands * 100.0
-    ci = 1.96 * HU_STD_BB100 / (args.hands / 100.0) ** 0.5
+    n = len(per_hand)
+    total_bb = sum(per_hand)
+    wr = total_bb / n * 100.0
+    if n > 1:
+        mean = total_bb / n
+        std = math.sqrt(sum((x - mean) ** 2 for x in per_hand) / (n - 1))
+        ci = Z * std / math.sqrt(n) * 100.0
+    else:
+        std = 0.0
+        ci = float("nan")
     print(f"Матч: {args.a} (A) vs {args.b} (B), HU NLHE {args.stacks / args.bb:.0f}bb")
-    print(f"Рук: {args.hands} за {dt:.1f} с ({args.hands / dt:.0f} рук/с)")
-    print(f"Винрейт {args.a} (A): {wr:+.1f} bb/100  (95% CI: ±{ci:.1f})")
+    print(f"Рук: {n} за {dt:.1f} с ({n / dt:.0f} рук/с)")
+    print(f"Винрейт {args.a} (A): {wr:+.1f} bb/100  (95% CI: ±{ci:.1f}, дисперсия {std:.1f} bb/рука)")
     print(f"Винрейт {args.b} (B): {-wr:+.1f} bb/100")
 
 
