@@ -60,18 +60,20 @@ main { display: flex; gap: 16px; padding: 16px; flex: 1; }
   display: flex; flex-direction: column; justify-content: flex-end; gap: 16px;
 }
 
-/* места ботов: абсолютные позиции вокруг стола, компакто (в один ряд) */
+/* места ботов: абсолютные позиции вокруг стола, компакто (в один ряд).
+   Зоны разнесены так, чтобы при 1..5 ботах ничего не перекрывалось:
+   верхние углы выше боковых, строка улицы ограничена центральной зоной. */
 .villains { position: absolute; inset: 0; pointer-events: none; }
 .seat.villain {
   position: absolute; display: flex; flex-direction: row; align-items: center; gap: 8px;
   pointer-events: auto; transition: opacity .25s;
 }
 .seat.villain.folded { opacity: .38; }
-.pos-top  { top: 20px;  left: 50%; transform: translateX(-50%); }
-.pos-tl   { top: 74px;  left: 26px; }
-.pos-tr   { top: 74px;  right: 26px; }
-.pos-left { top: 44%;   left: 8px;  transform: translateY(-50%); }
-.pos-right{ top: 44%;   right: 8px; transform: translateY(-50%); }
+.pos-top  { top: 14px;  left: 50%; transform: translateX(-50%); }
+.pos-tl   { top: 58px;  left: 11%; }
+.pos-tr   { top: 58px;  right: 11%; }
+.pos-left { top: 47%;   left: 6px;  transform: translateY(-50%); }
+.pos-right{ top: 47%;   right: 6px; transform: translateY(-50%); }
 
 .seat.villain .avatar { width: 40px; height: 40px; font-size: 20px; }
 .avatar {
@@ -123,8 +125,10 @@ main { display: flex; gap: 16px; padding: 16px; flex: 1; }
 .pot::before { content: "Банк: "; color: var(--dim); font-weight: 400; }
 .street {
   font-size: 12px; text-transform: uppercase; letter-spacing: 1px;
-  color: var(--dim); max-width: 100%; flex-wrap: wrap; text-align: center;
+  color: var(--dim); flex-wrap: wrap; text-align: center;
   line-height: 1.5;
+  /* узкая центральная зона: не заезжает под боковые места (left/right) */
+  max-width: 50%; margin: 0 auto;
 }
 
 .result-strip {
@@ -146,7 +150,10 @@ main { display: flex; gap: 16px; padding: 16px; flex: 1; }
 .actionbar {
   display: flex; gap: 12px; justify-content: center; align-items: stretch;
   background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 12px;
+  /* не растягивается на широких окнах: ширина стола */
+  width: 100%; max-width: 940px; margin: 0 auto;
 }
+.seat.folded .cards, .seat.folded .plate { opacity: .38; }
 .actionbar.hidden { display: none; }
 button {
   border: none; border-radius: 9px; padding: 10px 18px; font-size: 15px; font-weight: 700;

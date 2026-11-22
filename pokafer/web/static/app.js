@@ -188,6 +188,7 @@ function renderView(v) {
   els.hBet.style.display = v.hero.bet > 0 ? "" : "none";
   els.hBet.textContent = v.hero.bet > 0 ? Math.round(v.hero.bet) : "";
   els.seatHero.classList.toggle("active", v.to_act === 1 && !v.hand_over);
+  els.seatHero.classList.toggle("folded", !!v.hero.folded);
   els.combo.textContent = heroComboText(v);
   if (!v.hand_over) els.resultStrip.classList.add("hidden");
   setActions(v);
