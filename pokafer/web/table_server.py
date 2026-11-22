@@ -245,6 +245,17 @@ def create_table_app(default_strategy: str = "heuristic",
     def list_strategies():
         return strategies_available()
 
+    @app.get("/debug/state")
+    def debug_state():
+        """Ground truth последней активной сессии (для автотестов глаз).
+
+        Глаза НЕ используют этот endpoint в рантайме — он для проверки
+        точности распознавания против известного состояния.
+        """
+        return latest_view
+
+    latest_view: dict = {}
+
     @app.websocket("/ws/table")
     async def table(ws: WebSocket, strategy: str = default_strategy, seed: int | None = None):
         await ws.accept()
@@ -258,12 +269,16 @@ def create_table_app(default_strategy: str = "heuristic",
                 if event is None:
                     break
                 await ws.send_json(event)
+                latest_view = session.view()
                 await ws.send_json(session.view())
             if session.engine.hand_over:
                 await ws.send_json(session.finish_hand())
+                latest_view = session.view()
                 await ws.send_json(session.view())
 
+        nonlocal latest_view
         try:
+            latest_view = session.view()
             await ws.send_json(session.view())
             await advance_bot()
             while True:
@@ -275,11 +290,13 @@ def create_table_app(default_strategy: str = "heuristic",
                     except (ValueError, KeyError, RuntimeError) as e:
                         await ws.send_json({"type": "error", "detail": str(e)})
                         continue
+                    latest_view = session.view()
                     await ws.send_json(session.view())
                     await advance_bot()
                 elif mtype == "new_hand":
                     if session.engine.hand_over:
                         session._start_hand()
+                    latest_view = session.view()
                     await ws.send_json(session.view())
                     await advance_bot()
                 elif mtype == "configure":

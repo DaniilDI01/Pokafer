@@ -12,3 +12,5 @@ data/logs/*
 !data/snapshots/.gitkeep
 !data/logs/.gitkeep
 .env
+data/eyes/*
+!data/eyes/.gitkeep

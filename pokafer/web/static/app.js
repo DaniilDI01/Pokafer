@@ -14,7 +14,7 @@ const $ = (id) => document.getElementById(id);
 const els = {
   status: $("status"), log: $("log"),
   board: $("board"), pot: $("pot"), street: $("street"),
-  hStack: $("hStack"), hBet: $("hBet"), hCards: $("hCards"),
+  hStack: $("hStack"), hBet: $("hBet"), scoreline: $("scoreline"), hCards: $("hCards"),
   seatHero: $("seatHero"), combo: $("combo"), heroBtn: $("heroBtn"),
   villains: $("villains"),
   actionbar: $("actionbar"),
@@ -182,7 +182,8 @@ function renderView(v) {
   renderVillains(v);
   renderCards(els.board, v.board, 0, true);
   els.pot.textContent = Math.round(v.pot);
-  els.street.textContent = `${v.street} · рука #${v.hand_no} · ${v.stackline}`;
+  els.street.textContent = `${v.street} · рука #${v.hand_no}`;
+  els.scoreline.textContent = v.stackline;
   els.hStack.textContent = Math.round(v.hero.stack);
   els.heroBtn.textContent = v.hero.is_button ? "D" : "";
   els.hBet.style.display = v.hero.bet > 0 ? "" : "none";

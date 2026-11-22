@@ -19,6 +19,11 @@ dev = [
     "pytest>=8",
     "httpx>=0.27",
 ]
+eyes = [
+    "pillow>=10",
+    "mss>=9",
+    "pynput>=1.7",
+]
 
 [project.scripts]
 pokafer = "pokafer.cli:main"

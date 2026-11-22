@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Pokafer — веб-стол</title>
-<link rel="stylesheet" href="/static/style.css?v=7">
+<link rel="stylesheet" href="/static/style.css?v=11">
 </head>
 <body>
 <header>
@@ -14,6 +14,7 @@
     <div class="bot-chips" id="botChips"></div>
     <button id="addBotBtn" class="ghost small" title="Добавить бота (до 5)">+ бот</button>
   </div>
+  <div class="scoreline" id="scoreline"></div>
   <button id="hintBtn" class="ghost" title="Что бы сделал мозг на вашем месте">💡 подсказка</button>
 </header>
 
@@ -23,10 +24,10 @@
       <div class="villains" id="villains"></div>
 
       <div class="middle">
-        <div class="result-strip hidden" id="resultStrip"></div>
         <div class="board" id="board"></div>
         <div class="pot" id="pot"></div>
         <div class="street" id="street"></div>
+        <div class="result-strip hidden" id="resultStrip"></div>
       </div>
 
       <div class="seat hero" id="seatHero">
@@ -67,6 +68,6 @@
 
 <div class="statusline" id="status">подключение…</div>
 
-<script src="/static/app.js?v=7"></script>
+<script src="/static/app.js?v=11"></script>
 </body>
 </html>
