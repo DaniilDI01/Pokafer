@@ -42,19 +42,25 @@ PARAMS: dict = {
     "commit_eq": 0.52,
     "fvb_bluff": 0.58,         # fold_vs_bet соперника, с которого включаются блефы
     "bluff_cap": 0.30,
+    "bluff_unknown": 0.10,     # базовый блеф против оппонентов без статистики
+    "slowplay_cap": 0.80,      # даже с натсами рейзим не всегда (слоуплей-микс)
     "barrel_decay": 0.75,      # повторная агрессия этой же руки пассивнее
     # префлоп
     "open_w_utg": 0.16,
     "open_w_btn": 0.48,
     "hu_open_w": 0.55,         # HU: кнопка/SB открывает долю рук
     "option_raise_w": 0.16,    # доля рук для рейза на BB-опции
-    "defend_bonus": 0.10,      # защита блайндов против позднего стила шире
-    "call_odds_k": 1.9,        # пот-оддсы -> доля рук для колла рейза
-    "call_odds_base": 0.16,
+    "iso_per_limper": 0.06,    # ширина изоляции за каждого лимпера
+    "iso_size_bb": 1.0,        # сайзинг изоляции крупнее на bb за лимпера
+    "defend_bonus": 0.05,      # защита блайндов против позднего стила шире
+    "sb_penalty": 0.30,        # SB защищает заметно уже BB (позиционный минус)
+    "call_odds_k": 1.6,        # пот-оддсы -> доля рук для колла рейза
+    "call_odds_base": 0.10,
     "threebet_w": 0.09,        # доля рук для 3-бета на первый рейз
     "jam_bb": 13.0,            # эффективный стек ниже — короткие пуш-решения
-    "jam_w": 0.22,             # доля рук для пуша коротким стеком
-    "open_size_bb": 2.6,       # размер открытия в bb (плюс позиционная надбавка)
+    "jam_w": 0.18,             # база диапазона пуша коротким стеком
+    "jam_pos_k": 0.12,         # поздние позиции пушат шире
+    "open_size_bb": 2.6,       # открытие: рейз ДО столько bb (итоговая сумма)
     "open_size_pos_k": 0.6,
     "jitter": 0.04,
 }
@@ -117,7 +123,15 @@ class _Context:
             if len(self.hole) == 2 else 1.0
         )
         self.pos_frac = position_fraction(snap, self.me.seat)
-        self.me_is_blind = self.me.seat in preflop_order(snap)[-2:]
+        order = preflop_order(snap)
+        self.me_is_blind = self.me.seat in order[-2:]
+        # маленький блайнд: в HU это кнопка, в 3+ — предпоследний в порядке хода
+        sb_seat = snap.button_seat if len(order) == 2 else order[-2]
+        self.me_is_sb = self.me.seat == sb_seat
+        self.limper_count = sum(
+            1 for a in snap.actions
+            if a.street == "preflop" and a.type == "call"
+        )
         opp_stacks = [o.stack for o in self.opponents] or [self.me.stack]
         self.eff_stack_bb = min(self.me.stack, max(opp_stacks)) / snap.bb
         self.raiser_profile = self._raiser_profile()
@@ -191,7 +205,7 @@ class EquityStrategy(Strategy):
         p = PARAMS
         raise_p = _smooth((p["option_raise_w"] - pct) / 0.10)
         dist: dict[str, float] = {}
-        la = _closest_bet(c.legal, c.max_bet + 3.0 * c.snap.bb)
+        la = _closest_bet(c.legal, 3.0 * c.snap.bb)  # рейз ДО 3bb
         if la is not None:
             dist[la.key] = raise_p
         dist["check"] = 1.0 - dist.get(la.key, 0.0) if la else 1.0
@@ -199,7 +213,7 @@ class EquityStrategy(Strategy):
         return dist
 
     def _preflop_open(self, c: _Context, pct: float) -> dict[str, float]:
-        """Открытие: доля рук по позиции, сайзинг по позиции и стеку."""
+        """Открытие/изоляция: доля рук по позиции, лимп только за лимперами."""
         p = PARAMS
         n = len(c.snap.seats)
         if n == 2:
@@ -208,10 +222,13 @@ class EquityStrategy(Strategy):
             open_share = p["open_w_utg"] + (p["open_w_btn"] - p["open_w_utg"]) * c.pos_frac
         if c.eff_stack_bb <= p["jam_bb"]:
             open_share += 0.10
-        open_share = min(open_share, 1.0)
+        # изоляция: за каждым лимпером диапазон шире и сайзинг крупнее
+        open_share = min(open_share + p["iso_per_limper"] * c.limper_count, 1.0)
 
-        target = c.max_bet + (
+        # «рейз ДО open_size_bb» — итоговая сумма, без прибавки к блайнду
+        target = (
             p["open_size_bb"] + p["open_size_pos_k"] * c.pos_frac
+            + p["iso_size_bb"] * c.limper_count
         ) * c.snap.bb
         open_la = _closest_bet(c.legal, target)
         if open_la is None:
@@ -219,27 +236,41 @@ class EquityStrategy(Strategy):
             return {c.call_key: 1.0} if c.call_key else {"fold": 1.0}
 
         raise_p = _smooth((open_share - pct) / 0.06)
-        call_p = _smooth((open_share * 1.8 - pct) / 0.12) * (1.0 - raise_p) * 0.55
+        # лимп в мертвый банк с ранней позиции — ошибка: коллируем только
+        # за лимперами или как добор SB в HU
+        allow_limp = c.limper_count > 0 or n == 2
+        call_p = (
+            _smooth((open_share * 1.8 - pct) / 0.12)
+            * (1.0 - raise_p)
+            * (0.55 if allow_limp else 0.0)
+        )
         dist = {open_la.key: raise_p}
-        if c.call_key:
+        if c.call_key and call_p > 1e-9:
             dist[c.call_key] = call_p
         if "fold" in c.by_key:
             dist["fold"] = max(1.0 - raise_p - call_p, 1e-6)
         c.note = (
-            f"открытие с позиции {c.pos_frac:.0%}: диапазон {open_share:.0%}, "
-            f"рука {c.my_percentile:.0%} percentile"
+            f"открытие с позиции {c.pos_frac:.0%}"
+            + (f", лимперов {c.limper_count}" if c.limper_count else "")
+            + f": диапазон {open_share:.0%}, рука {c.my_percentile:.0%} percentile"
         )
         return dist
 
     def _preflop_facing_raise(self, c: _Context, pct: float, n_raises: int) -> dict[str, float]:
-        """Против рейза: 3-бет с сильных/по статистике, колл по оддсам, фолд."""
+        """Против рейза: 3-бет с сильных/по статистике, колл по оддсам, фолд.
+
+        SB защищает существенно уже BB: тот же колл дороже и без позиции.
+        """
         p = PARAMS
         steal = 1.0 if c.raiser_pos_frac >= 0.66 and c.me_is_blind else 0.0
+        blind_penalty = p["sb_penalty"] if c.me_is_sb else 0.0
         call_thr = min(
-            0.92,
+            0.85,
             p["call_odds_base"] + c.odds * p["call_odds_k"]
-            + steal * p["defend_bonus"] + 0.05 * (n_raises - 1),
+            + steal * p["defend_bonus"] - blind_penalty
+            + 0.05 * (n_raises - 1),
         )
+        call_thr = max(call_thr, 0.05)
         threebet_w = p["threebet_w"] / max(1, n_raises)
         light_3bet = 0.0
         prof = c.raiser_profile
@@ -256,7 +287,8 @@ class EquityStrategy(Strategy):
 
         dist: dict[str, float] = {}
         if threebet_p > 1e-9:
-            target = c.max_bet * 3.0 - c.me.bet_street * 2.0 + c.snap.pot * 0.2
+            # 3-бет ДО 3× размера рейза (+ чуть за лимперов): итоговая сумма
+            target = c.max_bet * 3.0 + c.snap.pot * 0.2
             la = _closest_bet(c.legal, target)
             if la is not None:
                 dist[la.key] = threebet_p
@@ -271,9 +303,13 @@ class EquityStrategy(Strategy):
         return dist
 
     def _preflop_short_stack_vs_raise(self, c: _Context, pct: float) -> dict[str, float]:
-        """Короткий стек против рейза: пуш с приличных рук, иначе фолд/колл-олл-ин."""
+        """Короткий стек против рейза: пуш или фолд, колл без пуша не играем."""
         p = PARAMS
-        jam_w = max(p["jam_w"], min(0.92, p["call_odds_base"] + c.odds * p["call_odds_k"]))
+        pos_bonus = p["jam_pos_k"] * c.pos_frac
+        if len(c.snap.seats) == 2:
+            pos_bonus += 0.15  # HU: пуш против рейза существенно шире
+        odds_bonus = 0.20 * max(0.0, c.odds - 0.35)  # против огромных ставок шире
+        jam_w = min(0.50, p["jam_w"] + pos_bonus + odds_bonus)
         la = _all_in(c.legal)
         if la is None:
             return {c.call_key: 1.0} if c.call_key else {"fold": 1.0}
@@ -283,14 +319,8 @@ class EquityStrategy(Strategy):
                 f"оддсы {c.odds:.0%}"
             )
             return {la.key: 1.0}
-        call_p = 0.12 if c.call_key else 0.0
-        dist: dict[str, float] = {}
-        if c.call_key:
-            dist[c.call_key] = call_p
-        if "fold" in c.by_key:
-            dist["fold"] = max(1.0 - call_p, 1e-6)
         c.note = f"короткий стек {c.eff_stack_bb:.0f}bb: рука {c.my_percentile:.0%}, фолд"
-        return dist
+        return {"fold": 1.0} if "fold" in c.by_key else {la.key: 1.0}
 
     # ---------- постфлоп ----------
 
@@ -304,7 +334,7 @@ class EquityStrategy(Strategy):
         raise_thr = p["raise_thr"] + strict
         margin = p["call_margin"] + strict * 0.5
         spr = c.eff_stack_bb * c.snap.bb / max(c.snap.pot, 1e-9)
-        fvb_avg = self._fold_vs_bet_avg(c)
+        fvb_all = self._fold_chance_all(c)
         barrels = sum(
             1 for a in c.snap.actions
             if a.seat == c.me.seat and a.street != "preflop"
@@ -315,10 +345,10 @@ class EquityStrategy(Strategy):
         if c.to_call > 1e-9:
             return self._facing_bet(c, eq, odds=c.odds, spr=spr,
                                     value_thr=raise_thr, margin=margin,
-                                    fvb_avg=fvb_avg, aggr_decay=aggr_decay,
+                                    fvb_fold=fvb_all, aggr_decay=aggr_decay,
                                     res=res, n_opp=n_opp)
         return self._free_play(c, eq, spr=spr, value_thr=value_thr,
-                               fvb_avg=fvb_avg, aggr_decay=aggr_decay,
+                               fvb_fold=fvb_all, aggr_decay=aggr_decay,
                                res=res, n_opp=n_opp)
 
     def _equity(self, c: _Context):
@@ -336,8 +366,13 @@ class EquityStrategy(Strategy):
         )
         return res.equity, res
 
-    def _fold_vs_bet_avg(self, c: _Context) -> float | None:
-        """Средний fold_vs_bet живых оппонентов (если статистика передана)."""
+    def _fold_chance_all(self, c: _Context) -> float | None:
+        """Вероятность, что ВСЕ живые оппоненты сфолдят на ставку.
+
+        Произведение fold_vs_bet известных оппонентов (в мультипоте блеф
+        работает, только если фолдят все). Если статистики нет ни у кого —
+        None (стратегия играет базовый блеф без экспериментов).
+        """
         if not c.profiles:
             return None
         fvbs = [
@@ -346,12 +381,17 @@ class EquityStrategy(Strategy):
             if pr.get("hands", 0) >= 5
             and any(o.name == name for o in c.opponents)
         ]
-        return sum(fvbs) / len(fvbs) if fvbs else None
+        if not fvbs:
+            return None
+        p_fold = 1.0
+        for f in fvbs:
+            p_fold *= f
+        return p_fold
 
     def _facing_bet(self, c: _Context, eq: float, odds: float, spr: float,
-                    value_thr: float, margin: float, fvb_avg: float | None,
+                    value_thr: float, margin: float, fvb_fold: float | None,
                     aggr_decay: float, res, n_opp: int) -> dict[str, float]:
-        """Против ставки: колл по оддсам, рейз с велью, блеф-рейз по статистике."""
+        """Против ставки: рейз растёт с эквити, колл — остаток; слоуплей — микс."""
         p = PARAMS
         if spr < p["commit_spr"] and eq >= p["commit_eq"]:
             la = _all_in(c.legal)
@@ -362,13 +402,18 @@ class EquityStrategy(Strategy):
                 )
                 return {la.key: 1.0}
 
-        call_p = _smooth((eq - odds - margin) / 0.06)
-        raise_p = _smooth((eq - value_thr) / 0.08) * (1.0 - call_p * 0.5)
+        # рейз растёт с эквити; самая сильная часть натсов — слоуплей-колл
+        raise_p = min(_smooth((eq - value_thr) / 0.08), p["slowplay_cap"])
+        call_p = _smooth((eq - odds - margin) / 0.06) * (1.0 - raise_p)
         bluff_r = 0.0
-        if fvb_avg is not None and eq < 0.45:
-            bluff_r = (
-                _smooth((fvb_avg - p["fvb_bluff"] - 0.06) / 0.15) * 0.18 * aggr_decay
-            )
+        if eq < 0.45:
+            if fvb_fold is None:
+                bluff_r = 0.04  # робкий блеф-рейз против неизвестных
+            else:
+                bluff_r = (
+                    _smooth((fvb_fold - p["fvb_bluff"] - 0.06) / 0.15) * 0.18
+                    * aggr_decay
+                )
         fold_p = max(1.0 - call_p - raise_p - bluff_r, 1e-6)
 
         dist: dict[str, float] = {}
@@ -383,7 +428,7 @@ class EquityStrategy(Strategy):
             dist[c.call_key] = call_p
         if "fold" in c.by_key:
             dist["fold"] = fold_p
-        fvb_note = f", fold-vs-бет {fvb_avg:.0%}" if fvb_avg is not None else ""
+        fvb_note = f", P(все фолд) {fvb_fold:.0%}" if fvb_fold is not None else ""
         c.note = (
             f"эквити {eq:.0%} vs {n_opp} диапазон(ов), оддсы {odds:.0%}{fvb_note}"
             + (f", n={res.n} ({'точный' if res.exact else 'MC'})" if res.n else "")
@@ -391,19 +436,22 @@ class EquityStrategy(Strategy):
         return dist
 
     def _free_play(self, c: _Context, eq: float, spr: float, value_thr: float,
-                   fvb_avg: float | None, aggr_decay: float, res,
+                   fvb_fold: float | None, aggr_decay: float, res,
                    n_opp: int) -> dict[str, float]:
-        """Своя игра: велью-ставка / блеф по статистике / чек."""
+        """Своя игра: велью-ставка / блеф (по статистике или базовый) / чек."""
         p = PARAMS
         bet_p = _smooth((eq - value_thr) / 0.07)
         bluff_p = 0.0
-        if fvb_avg is not None and eq < value_thr:
-            bluff_p = (
-                _smooth((fvb_avg - p["fvb_bluff"]) / 0.18) * p["bluff_cap"] * aggr_decay
-            )
+        if eq < value_thr:
+            if fvb_fold is None:
+                bluff_p = p["bluff_unknown"]  # против неизвестных не «нит»
+            else:
+                bluff_p = _smooth((fvb_fold - p["fvb_bluff"]) / 0.18) * p["bluff_cap"]
+            bluff_p *= aggr_decay
         bet_total = min(bet_p + bluff_p, 0.95)
 
         dist: dict[str, float] = {}
+        la = None
         if bet_total > 1e-9:
             frac = 0.5 + (eq - value_thr) * 0.9
             if spr < p["commit_spr"] * 2:
@@ -416,7 +464,7 @@ class EquityStrategy(Strategy):
                 dist[la.key] = bet_total
         if "check" in c.by_key:
             dist["check"] = 1.0 - dist.get(la.key, 0.0) if dist else 1.0
-        fvb_note = f", fold-vs-бет {fvb_avg:.0%}" if fvb_avg is not None else ""
+        fvb_note = f", P(все фолд) {fvb_fold:.0%}" if fvb_fold is not None else ""
         c.note = (
             f"эквити {eq:.0%} vs {n_opp} диапазон(ов), банк {c.snap.pot:g}, SPR {spr:.1f}"
             f"{fvb_note}"

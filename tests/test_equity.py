@@ -158,3 +158,41 @@ def test_infoset_key_deterministic():
     k2 = infoset_key("flop", 12, 21, 3, ("c", "b1"))
     k3 = infoset_key("flop", 12, 22, 3, ("c", "b1"))
     assert k1 == k2 and k1 != k3
+
+
+def test_exact_river_tie_semantics_and_sum():
+    """Борд с тремя двойками: тьи с любым тузом; win+tie+lose == 1, tie = доля банка."""
+    hole = parse_cards(["Ah", "Qd"])
+    board = parse_cards(["2s", "2h", "2d", "2c", "Kd"])
+    res = equity_exact_river(hole, board, equity_all_combos(hole, board))
+    assert res.exact and res.n == 990
+    # тьи-комбо: у оппонента есть туз (3 живых туза: 3*42 + C(3,2) = 129)
+    ties = 129
+    assert res.win == pytest.approx((990 - ties) / 990)
+    assert res.tie == pytest.approx(ties * 0.5 / 990)  # наша доля банка из сплитов
+    # win+tie+lose < 1: остальное — доля банка соперникам в сплитах
+    assert res.win + res.tie + res.lose == pytest.approx(1 - ties * 0.5 / 990)
+    assert res.equity == pytest.approx(res.win + res.tie)
+
+
+def test_equity_mc_empty_samplers_is_equity_one():
+    hole = parse_cards(["As", "Ac"])
+    res = equity_mc(hole, [], opponent_samplers=[], n_rollouts=100, rng=random.Random(1))
+    assert res.equity == 1.0 and res.n == 0
+
+
+def test_exact_river_empty_range_is_equity_one():
+    hole = parse_cards(["As", "Ac"])
+    board = parse_cards(["Kd", "7c", "2h", "9s", "5c"])
+    res = equity_exact_river(hole, board, [])
+    assert res.equity == 1.0 and res.n == 0 and res.exact
+
+
+def test_equity_validates_inputs():
+    hole = parse_cards(["As", "Ac"])
+    with pytest.raises(ValueError):
+        equity_mc(hole[:1], [])
+    with pytest.raises(ValueError):
+        equity_mc(hole, ["2c"] * 6)
+    with pytest.raises(ValueError):
+        equity_exact_river(hole, ["2c", "3c"], [])

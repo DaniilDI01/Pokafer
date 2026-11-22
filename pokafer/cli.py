@@ -2,12 +2,14 @@
 
     pokafer                  — список команд
     pokafer status           — что запущено, стратегии, где логи и отчёты
+    pokafer stop             — остановить все процессы pokafer
     pokafer <команда> ...    — любой инструмент проекта (флаги как у скриптов)
 """
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import runpy
 import sys
 import urllib.request
@@ -70,6 +72,82 @@ def _http_code(url: str) -> int | None:
         return None
 
 
+# маркеры командной строки процессов, поднятых pokafer (см. cmd_stop)
+_CMD_MARKERS = (
+    "pokafer bench", "pokafer arena", "pokafer demo",
+    "pokafer table", "pokafer brain", "pokafer.benchmark",
+)
+_SCRIPT_MARKERS = (
+    "serve_table.py", "serve_brain.py",
+    "scripts/benchmark.py", "scripts/arena.py", "scripts/replay_offline.py",
+)
+
+
+def _pokafer_processes() -> list[tuple[int, str]]:
+    """PID и командная строка процессов, поднятых pokafer. Чужие не попадают.
+
+    Критерии (строгие, чтобы не задеть ничего постороннего):
+      - в cmdline есть маркер команды pokafer («pokafer bench» и т.п.), ИЛИ
+      - в cmdline есть маркер скрипта проекта И процесс работает из репозитория
+        (cwd внутри Pokafer/);
+      - процесс — python; свой процесс (сам `pokafer stop`) исключён.
+    """
+    root = str(ROOT)
+    my_pid = os.getpid()
+    out: list[tuple[int, str]] = []
+    for entry in Path("/proc").iterdir():
+        if not entry.name.isdigit():
+            continue
+        pid = int(entry.name)
+        if pid <= 1 or pid == my_pid:
+            continue
+        try:
+            raw = (entry / "cmdline").read_bytes()
+            cmdline = raw.replace(b"\x00", b" ").decode("utf-8", "ignore")
+            if "python" not in cmdline:
+                continue
+            cwd = (entry / "cwd").resolve()
+        except OSError:
+            continue  # процесс уже умер или недоступен
+        by_command = any(m in cmdline for m in _CMD_MARKERS)
+        by_script = any(m in cmdline for m in _SCRIPT_MARKERS) and cwd.is_relative_to(ROOT)
+        if by_command or by_script:
+            out.append((pid, cmdline.strip()))
+    return out
+
+
+def cmd_stop() -> int:
+    """Остановить всё, что поднял pokafer: стол, мозг, фоновые прогоны."""
+    import signal
+    import time
+
+    procs = _pokafer_processes()
+    if not procs:
+        print("pokafer: запущенных процессов не найдено")
+    for pid, cmd in procs:
+        try:
+            os.kill(pid, signal.SIGTERM)
+            print(f"  SIGTERM -> {pid}: {cmd[:100]}")
+        except ProcessLookupError:
+            print(f"  {pid}: уже завершён")
+    if procs:
+        time.sleep(0.7)
+        for pid, _ in procs:
+            if Path(f"/proc/{pid}").exists():
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                    print(f"  SIGKILL -> {pid} (не отреагировал на SIGTERM)")
+                except ProcessLookupError:
+                    pass
+    for name, port, probe in (
+        ("HTTP-API мозга", 8000, "/health"),
+        ("веб-стол      ", 8010, "/v1/strategies"),
+    ):
+        code = _http_code(f"http://127.0.0.1:{port}{probe}")
+        print(f"  {name} :{port} — " + ("ВСЁ ЕЩЁ РАБОТАЕТ" if code else "остановлен"))
+    return 0
+
+
 def cmd_status() -> int:
     from pokafer.brain.strategies import available
 
@@ -112,11 +190,13 @@ def main(argv: list[str] | None = None) -> int:
         f"  {name:8s} {desc}\n          пример: {ex}"
         for name, (_, desc, ex) in COMMANDS.items()
     ) + "\n  status   что запущено, доступные стратегии, последние прогоны\n" + \
+        "  stop     остановить все процессы pokafer (стол, мозг, прогоны)\n" + \
         "\nУ каждой команды своя справка: pokafer <команда> -h\n" + \
         "Конфиг бенчмарка: configs/benchmark.py"
 
     sub = p.add_subparsers(dest="cmd")
     sub.add_parser("status", help="что запущено, стратегии, где логи и отчёты")
+    sub.add_parser("stop", help="остановить все процессы pokafer (стол, мозг, прогоны)")
     for name, (_, desc, _) in COMMANDS.items():
         # add_help=False: -h пробрасывается скрипту (справка в одном месте)
         sub.add_parser(name, help=desc, add_help=False)
@@ -127,6 +207,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.cmd == "status":
         return cmd_status()
+    if args.cmd == "stop":
+        return cmd_stop()
     # всё после имени команды уходит скрипту как есть
     run_script(COMMANDS[args.cmd][0], argv[1:])
     return 0

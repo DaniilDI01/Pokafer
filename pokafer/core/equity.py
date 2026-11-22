@@ -23,7 +23,17 @@ MIN_ROLLOUTS = 150  # ниже этого выборка слишком шумн
 
 @dataclass
 class EquityResult:
-    """Эквити руки: доля банка [0..1] с учётом сплитов."""
+    """Эквити руки: доля банка [0..1] с учётом сплитов.
+
+    Семантика полей ЕДИНА для MC и точного расчёта:
+      win   — частота чистых побед;
+      tie   — НАША доля банка из сплитов (2-way сплит даёт 0.5);
+      lose  — частота проигрышей;
+      equity = win + tie — главный ответ модуля.
+
+    Внимание: win + tie + lose может быть МЕНЬШЕ 1 — разница это доля
+    банка, отданная соперникам в сплитах (в 2-way сплите половина банка их).
+    """
 
     equity: float
     n: int  # выбросов (MC) или комбинаций соперника (точный расчёт)
@@ -39,6 +49,9 @@ class EquityResult:
             "n": self.n,
             "exact": self.exact,
             "elapsed_ms": round(self.elapsed_ms, 1),
+            "win": round(self.win, 4),
+            "tie": round(self.tie, 4),
+            "lose": round(self.lose, 4),
         }
 
 
@@ -58,23 +71,38 @@ def equity_mc(
 ) -> EquityResult:
     """Эквити методом Монте-Карло: докидываем борд и руки оппонентов.
 
-    opponent_samplers — по одному на живого оппонента; None -> все оппоненты
-    со случайными картами. Ограничение по времени: выбирает минимум из
-    n_rollouts и того, что успевает за time_budget_ms (но не меньше
-    MIN_ROLLOUTS выбросов — для статистической устойчивости).
+    board может быть любым префиксом (0..5 карт) — недостающие карты
+    докидываются в каждом выбросе. hole — ровно 2 карты.
+
+    opponent_samplers: None = один оппонент со случайными картами;
+    [] = живых оппонентов нет (эквити 1.0); список с None-элементами —
+    эти оппоненты случайные. Ограничение по времени: не больше
+    time_budget_ms, но не меньше MIN_ROLLOUTS выбросов.
+
+    Известное упрощение: карты сфолживших игроков движку неизвестны
+    (Snapshot их скрывает), поэтому не считаются мёртвыми — сэмплер может
+    изредка «раздать» мёртвую карту. Эффект пренебрежимо мал и не
+    исправим без утечки скрытой информации.
     """
     import random as _random
 
     rng = rng or _random.Random()
     hole = list(hole)
     board = list(board)
-    if opponent_samplers:
+    if len(hole) != 2:
+        raise ValueError(f"рука должна быть из 2 карт, получено {len(hole)}")
+    if not 0 <= len(board) <= 5:
+        raise ValueError(f"борд должен быть 0..5 карт, получено {len(board)}")
+    if opponent_samplers is None:
+        n_opp = 1
+        samplers = [_uniform_sampler]
+    elif not opponent_samplers:
+        # [] = живых оппонентов нет: банк наш по умолчанию
+        return EquityResult(equity=1.0, n=0, exact=True, elapsed_ms=0.0, win=1.0)
+    else:
         # None в списке = случайные карты у этого оппонента
         samplers = [s or _uniform_sampler for s in opponent_samplers]
         n_opp = len(samplers)
-    else:
-        n_opp = 1
-        samplers = [_uniform_sampler]
     t0 = time.perf_counter()
     deadline = t0 + time_budget_ms / 1000.0
 
@@ -139,40 +167,52 @@ def equity_mc(
 def equity_exact_river(
     hole: list[int], board: list[int], opponent_combos: list[tuple[int, int]]
 ) -> EquityResult:
-    """Точное эквити на ривере: перечисляем все комбинации рук оппонента.
+    """Точное эквити на ривере против ОДНОГО оппонента (только HU).
 
     board должен быть полным (5 карт). opponent_combos — все возможные руки
     оппонента (диапазон или все C(46,2)); дубликаты отфильтровываются.
+    Мультипой точный перебор комбинаторно взрывается — для нескольких
+    оппонентов используйте equity_mc с сэмплерами.
+
+    Пустой opponent_combos = у оппонента нет живых рук: банк наш (equity 1).
+    Семантика win/tie/lose — как в equity_mc (tie = наша доля банка из
+    сплитов; win + tie + lose == 1).
     """
+    if len(hole) != 2:
+        raise ValueError(f"рука должна быть из 2 карт, получено {len(hole)}")
     if len(board) != 5:
         raise ValueError("точный расчёт требует полный борд (5 карт)")
     t0 = time.perf_counter()
     dead = set(hole) | set(board)
-    combos = []
+    combos: list[tuple[int, int]] = []
     seen = set()
     for c1, c2 in opponent_combos:
         if c1 in dead or c2 in dead:
             continue
         key = (min(c1, c2), max(c1, c2))
-        if key in seen:
-            continue
-        seen.add(key)
-        combos.append(key)
+        if key not in seen:
+            seen.add(key)
+            combos.append(key)
 
+    if not combos:
+        return EquityResult(equity=1.0, n=0, exact=True,
+                            elapsed_ms=(time.perf_counter() - t0) * 1000.0,
+                            win=1.0)
+
+    my = evaluate7_fast(hole + board)  # константа — вынесена из цикла
     win = tie = lose = 0.0
     for c1, c2 in combos:
         opp = evaluate7_fast([c1, c2] + board)
-        my = evaluate7_fast(hole + board)
         if my > opp:
             win += 1.0
         elif my == opp:
-            tie += 1.0
+            tie += 0.5  # наша доля банка при 2-way сплите (функция только HU)
         else:
             lose += 1.0
     n = len(combos)
     elapsed = (time.perf_counter() - t0) * 1000.0
     return EquityResult(
-        equity=(win + tie / 2.0) / n if n else 0.0,
+        equity=(win + tie) / n,
         n=n,
         exact=True,
         elapsed_ms=elapsed,

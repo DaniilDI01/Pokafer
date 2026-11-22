@@ -211,3 +211,142 @@ def test_brain_decide_accepts_explicit_profiles():
 
 def snap_for(snap: Snapshot) -> Snapshot:
     return snap
+
+
+def test_equity_open_sizing_is_total_bb():
+    """Открытие «2.6bb» — это рейз ДО 2.6bb, без двойного учёта блайнда."""
+    snap = Snapshot(
+        hand_id="h", sb=1, bb=2, button_seat=1, actor_seat=1, street="preflop",
+        board=[], pot=3.0,
+        seats=[
+            SeatState(seat=1, name="hero", stack=199.0, bet_street=1.0,
+                      invested=1.0, is_hero=True, hole_cards=["As", "Ac"]),
+            SeatState(seat=2, name="bb", stack=198.0, bet_street=2.0, invested=2.0),
+        ],
+        actions=[
+            {"order": 0, "street": "preflop", "seat": 1, "type": "post",
+             "amount_to": 1, "amount": 1},
+            {"order": 1, "street": "preflop", "seat": 2, "type": "post",
+             "amount_to": 2, "amount": 2},
+        ],
+    )
+    legal = legal_actions(snap)
+    brain = Brain("equity", seed=1)
+    dist = brain.strategy.distribution(snap, legal)
+    bets = [k for k in dist if k.startswith(("bet", "raise"))]
+    assert bets, "открытие должно содержать ставку"
+    amount = float(bets[0].split(":")[1])
+    assert 2.3 * 2 <= amount <= 3.3 * 2, f"открытие {amount:g} чипов = {amount/2:.1f}bb"
+
+
+def _mid_hand():
+    """Средняя рука (percentile 0.38..0.56) для тестов калибровки."""
+    from pokafer.core.abstraction import load_ranking
+
+    ranking = load_ranking()
+    for label in ("J9o", "Q9o", "T9o", "K9o", "Q8o", "J8o", "T8o"):
+        cls = next(c for c in ranking.classes if c.label == label)
+        if 0.38 <= ranking.percentile(cls) <= 0.56:
+            cards = [f"{__import__('pokafer.core.cards', fromlist=['RANK_CHARS']).RANK_CHARS[cls.hi]}"
+                     f"{'s' if cls.suited else 'd'}",
+                     f"{__import__('pokafer.core.cards', fromlist=['RANK_CHARS']).RANK_CHARS[cls.lo]}"
+                     f"{'s' if cls.suited else 'h'}"]
+            return cards, ranking.percentile(cls)
+    pytest.fail("не нашлась средняя рука для теста")
+
+
+def _sixmax_open_vs_btn(actor_seat):
+    """6-max: BTN (место 6) открыл до 5 чипов; актор — SB (1) или BB (2)."""
+    from pokafer.core.cards import RANK_CHARS
+
+    hole, _ = _mid_hand()
+    seats = []
+    for i in range(1, 7):
+        bet_street = {1: 1.0, 2: 2.0, 6: 5.0}.get(i, 0.0)
+        seats.append(SeatState(
+            seat=i, name=f"p{i}",
+            stack=200.0 - bet_street,
+            bet_street=bet_street,
+            invested=max(bet_street, 1.0 if i in (1, 2) else 0.0),
+            is_hero=i == actor_seat,
+            hole_cards=hole if i == actor_seat else None,
+        ))
+    actions = [
+        {"order": 0, "street": "preflop", "seat": 1, "type": "post", "amount_to": 1, "amount": 1},
+        {"order": 1, "street": "preflop", "seat": 2, "type": "post", "amount_to": 2, "amount": 2},
+        {"order": 2, "street": "preflop", "seat": 6, "type": "raise", "amount_to": 5, "amount": 3},
+    ]
+    return Snapshot(hand_id="h", sb=1, bb=2, button_seat=6, actor_seat=actor_seat,
+                    street="preflop", board=[], pot=8.0, seats=seats, actions=actions)
+
+
+def test_sb_defends_tighter_than_bb():
+    """SB против стила защищает уже, чем BB (позиционный минус)."""
+    hole, pct = _mid_hand()
+    assert 0.30 < pct < 0.62  # рука в зоне расхождения диапазонов
+    dist_sb = Brain("equity", seed=1).strategy.distribution(
+        _sixmax_open_vs_btn(1), legal_actions(_sixmax_open_vs_btn(1)))
+    dist_bb = Brain("equity", seed=1).strategy.distribution(
+        _sixmax_open_vs_btn(2), legal_actions(_sixmax_open_vs_btn(2)))
+    assert dist_sb.get("fold", 0) > dist_bb.get("fold", 0) + 0.2
+
+
+def test_short_stack_jams_narrow_range_or_folds():
+    """10bb против рейза: пуш только приличных рук, середина — фолд."""
+    hole, pct = _mid_hand()
+    snap = Snapshot(
+        hand_id="h", sb=1, bb=2, button_seat=1, actor_seat=1, street="preflop",
+        board=[], pot=7.0,
+        seats=[
+            SeatState(seat=1, name="hero", stack=19.0, bet_street=1.0, invested=1.0,
+                      is_hero=True, hole_cards=hole),
+            SeatState(seat=2, name="bb", stack=16.0, bet_street=4.0, invested=4.0),
+        ],
+        actions=[
+            {"order": 0, "street": "preflop", "seat": 1, "type": "post", "amount_to": 1, "amount": 1},
+            {"order": 1, "street": "preflop", "seat": 2, "type": "post", "amount_to": 2, "amount": 2},
+            {"order": 2, "street": "preflop", "seat": 2, "type": "raise", "amount_to": 4, "amount": 2},
+        ],
+    )
+    legal = legal_actions(snap)
+    dist = Brain("equity", seed=1).strategy.distribution(snap, legal)
+    assert pct > 0.30, "средняя рука выше узкого диапазона пуша"
+    assert dist.get("fold", 0) > 0.5, "колл-олл-ин без пуш-эквити не играем"
+    # премиум пушит
+    snap.seats[0].hole_cards = ["As", "Ac"]
+    dist_aa = Brain("equity", seed=1).strategy.distribution(snap, legal)
+    assert any(k.startswith("raise") for k in dist_aa) or any(k.startswith("bet") for k in dist_aa)
+
+
+def test_utg_does_not_limp():
+    """Без лимперов с ранней позиции лимпа нет: только рейз/фолд."""
+    hole, _ = _mid_hand()
+    snap = Snapshot(
+        hand_id="h", sb=1, bb=2, button_seat=1, actor_seat=4, street="preflop",
+        board=[], pot=3.0,
+        seats=[SeatState(seat=i, name=f"p{i}", stack=200.0,
+                         bet_street=2.0 if i == 3 else (1.0 if i == 2 else 0.0),
+                         invested=2.0 if i == 3 else (1.0 if i == 2 else 0.0),
+                         is_hero=i == 4, hole_cards=hole if i == 4 else None)
+               for i in range(1, 7)],
+        actions=[
+            {"order": 0, "street": "preflop", "seat": 2, "type": "post", "amount_to": 1, "amount": 1},
+            {"order": 1, "street": "preflop", "seat": 3, "type": "post", "amount_to": 2, "amount": 2},
+        ],
+    )
+    dist = Brain("equity", seed=1).strategy.distribution(snap, legal_actions(snap))
+    assert dist.get("call", 0) == 0.0
+    assert "check" not in dist
+
+
+def test_nuts_raises_more_than_calls_facing_bet():
+    """С натсами против ставки рейз доминирует над коллом (инверсия убрана)."""
+    snap = _snapshot(["As", "Ac"], ["7s", "8d", "2h", "9c", "Jd"],
+                     opp_bet=12.0, opp_invested=15.0, hero_invested=3.0)
+    snap.street = "river"
+    snap.pot = 30.0
+    legal = legal_actions(snap)
+    dist = Brain("equity", seed=1).strategy.distribution(snap, legal)
+    bet_p = sum(v for k, v in dist.items() if k.startswith(("bet", "raise")))
+    call_p = dist.get("call", 0.0)
+    assert bet_p > call_p, f"рейз {bet_p:.2f} <= колл {call_p:.2f}"
