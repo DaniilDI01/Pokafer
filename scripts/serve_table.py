@@ -16,8 +16,11 @@ def main() -> None:
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--port", type=int, default=8010)
     p.add_argument("--strategy", default="heuristic")
+    p.add_argument("--bot-think", type=float, default=0.5, dest="bot_think",
+                   help="пауза между ходами ботов (сек; больше = легче калибровке глаз)")
     args = p.parse_args()
-    uvicorn.run(create_table_app(args.strategy), host=args.host, port=args.port)
+    uvicorn.run(create_table_app(args.strategy, bot_think_sec=args.bot_think),
+                host=args.host, port=args.port)
 
 
 if __name__ == "__main__":

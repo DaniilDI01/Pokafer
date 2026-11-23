@@ -237,6 +237,14 @@ def create_table_app(default_strategy: str = "heuristic",
     app = FastAPI(title="Pokafer Web Table")
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
+    @app.middleware("http")
+    async def _no_static_cache(request, call_next):
+        """Разработка: статика всегда свежая (глаза/калибровка не ловят старую вёрстку)."""
+        resp = await call_next(request)
+        if request.url.path.startswith("/static"):
+            resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        return resp
+
     @app.get("/")
     def index():
         return FileResponse(STATIC_DIR / "index.html")
@@ -247,14 +255,14 @@ def create_table_app(default_strategy: str = "heuristic",
 
     @app.get("/debug/state")
     def debug_state():
-        """Ground truth последней активной сессии (для автотестов глаз).
+        """Ground truth последней активной сессии, построенный ЖИВЬЁМ.
 
         Глаза НЕ используют этот endpoint в рантайме — он для проверки
         точности распознавания против известного состояния.
         """
-        return latest_view
+        return latest_session.view() if latest_session else {}
 
-    latest_view: dict = {}
+    latest_session: TableSession | None = None
 
     @app.websocket("/ws/table")
     async def table(ws: WebSocket, strategy: str = default_strategy, seed: int | None = None):
@@ -269,16 +277,14 @@ def create_table_app(default_strategy: str = "heuristic",
                 if event is None:
                     break
                 await ws.send_json(event)
-                latest_view = session.view()
                 await ws.send_json(session.view())
             if session.engine.hand_over:
                 await ws.send_json(session.finish_hand())
-                latest_view = session.view()
                 await ws.send_json(session.view())
 
-        nonlocal latest_view
+        nonlocal latest_session
         try:
-            latest_view = session.view()
+            latest_session = session
             await ws.send_json(session.view())
             await advance_bot()
             while True:
@@ -289,15 +295,16 @@ def create_table_app(default_strategy: str = "heuristic",
                         session.engine.apply(msg["action"], msg.get("amount"))
                     except (ValueError, KeyError, RuntimeError) as e:
                         await ws.send_json({"type": "error", "detail": str(e)})
+                        # ресинк: клиент мог разойтись с сервером (устаревший
+                        # минимум рейза и т.п.) — присылаем актуальный вид
+                        await ws.send_json(session.view())
                         continue
-                    latest_view = session.view()
-                    await ws.send_json(session.view())
+                        await ws.send_json(session.view())
                     await advance_bot()
                 elif mtype == "new_hand":
                     if session.engine.hand_over:
                         session._start_hand()
-                    latest_view = session.view()
-                    await ws.send_json(session.view())
+                        await ws.send_json(session.view())
                     await advance_bot()
                 elif mtype == "configure":
                     try:
