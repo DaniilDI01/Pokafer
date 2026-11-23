@@ -14,7 +14,6 @@
     <div class="bot-chips" id="botChips"></div>
     <button id="addBotBtn" class="ghost small" title="Добавить бота (до 5)">+ бот</button>
   </div>
-  <div class="scoreline" id="scoreline"></div>
   <button id="hintBtn" class="ghost" title="Что бы сделал мозг на вашем месте">💡 подсказка</button>
 </header>
 
@@ -66,8 +65,11 @@
   </aside>
 </main>
 
-<div class="statusline" id="status">подключение…</div>
+<div class="statusline">
+  <span id="status">подключение…</span>
+  <span class="scoreline" id="scoreline"></span>
+</div>
 
-<script src="/static/app.js?v=11"></script>
+<script src="/static/app.js?v=12"></script>
 </body>
 </html>

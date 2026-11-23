@@ -14,3 +14,5 @@ data/logs/*
 .env
 data/eyes/*
 !data/eyes/.gitkeep
+!data/eyes/sites.toml
+!data/eyes/pokafer_local.toml

@@ -121,27 +121,30 @@ main { display: flex; gap: 16px; padding: 16px; flex: 1; }
 .card.small .s { font-size: 16px; }
 
 .middle {
-  text-align: center; display: flex; flex-direction: column; gap: 8px;
-  align-items: center; margin: auto 0; /* борд по центру между ботами и героем */
+  margin: 0 auto; position: relative;
+  text-align: center; height: 258px;
+  /* дети абсоютно закреплены: банк/улица/борд/итог не плавают ни при какой
+     улице и содержимом (глаза читают зоны в % — они обязаны не плавать) */
 }
-.board { min-height: 66px; display: flex; gap: 7px; }
-.pot { font-size: 18px; font-weight: 700; color: var(--accent); }
+.board { position: absolute; top: 0; left: 50%; transform: translateX(-50%);
+  min-height: 66px; display: flex; gap: 7px; }
+.pot { position: absolute; top: 96px; left: 50%; transform: translateX(-50%);
+  white-space: nowrap; font-size: 18px; font-weight: 700; color: var(--accent); }
 .pot::before { content: "Банк: "; color: var(--dim); font-weight: 400; }
-.street {
-  font-size: 12px; text-transform: uppercase; letter-spacing: 1px;
-  color: var(--dim); flex-wrap: wrap; text-align: center;
-  line-height: 1.5;
+.street { position: absolute; top: 132px; left: 50%; transform: translateX(-50%);
+  white-space: nowrap; font-size: 12px; text-transform: uppercase; letter-spacing: 1px;
+  color: var(--dim);
   /* узкая центральная зона: не заезжает под боковые места (left/right) */
-  max-width: 60%; margin: 0 auto;
+  max-width: 60%;
 }
 
-.result-strip {
+.result-strip { position: absolute; top: 160px; left: 50%; transform: translateX(-50%);
   background: rgba(0,0,0,.5); border: 1px solid var(--accent);
   border-radius: 10px; padding: 8px 16px;
-  /* центральная зона ниже улицы: не перекрывает места ботов */
-  max-width: 58%; margin: 0 auto;
+  /* фиксированная высота: длинный список вскрытий скроллится внутри */
+  max-width: 58%; height: 88px; overflow-y: auto;
 }
-.result-strip.hidden { display: none; }
+.result-strip.hidden { visibility: hidden; }  /* место резервируется: зоны не плывут */
 .result-strip .main { font-size: 15px; font-weight: 800; color: var(--accent); }
 .result-strip .detail { font-size: 12px; color: var(--dim); margin-top: 3px; }
 
@@ -197,7 +200,11 @@ button.big { font-size: 16px; padding: 12px 22px; }
 .log .dist { color: var(--accent); }
 
 .statusline {
-  text-align: center; color: var(--dim); font-size: 12px; padding: 6px;
+  display: flex; justify-content: center; gap: 16px; align-items: center;
+  color: var(--dim); font-size: 12px; padding: 6px;
   border-top: 1px solid var(--line);
+}
+.statusline .scoreline {
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 460px;
 }
 .statusline.bad { color: var(--red); }

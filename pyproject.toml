@@ -23,6 +23,7 @@ eyes = [
     "pillow>=10",
     "mss>=9",
     "pynput>=1.7",
+    "selenium>=4.20",
 ]
 
 [project.scripts]

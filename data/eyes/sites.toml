@@ -1,0 +1,13 @@
+# Реестр сайтов для глаз: домен(ы) -> пресет калибровки.
+# Новый сайт = новый пресет в [presets] + строка в [domains].
+# Пресет-файл лежит рядом (data/eyes/<calibration>), зоны в долях окна.
+
+[presets.pokafer_local]
+url_patterns = ["localhost:8010", "127.0.0.1:8010", "localhost:8011", "127.0.0.1:8011"]
+theme = "dark_felt"
+calibration = "pokafer_local.toml"
+card_templates = "pokafer_local"
+
+[domains]
+"127.0.0.1" = "pokafer_local"
+"localhost" = "pokafer_local"

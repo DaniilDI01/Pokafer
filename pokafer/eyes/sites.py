@@ -77,6 +77,8 @@ def preset_for_domain(domain: str, registry: dict | None = None,
     """Пресет по домену/порту вкладки; KeyError с понятным текстом."""
     reg = registry if registry is not None else load_registry(path)
     domain = domain.lower().strip()
+    if ":" in domain:  # host:port -> host
+        domain = domain.rsplit(":", 1)[0]
     preset_name = None
     for dom, name in reg.get("domains", {}).items():
         if domain == dom.lower() or domain.endswith("." + dom.lower()):

@@ -104,7 +104,6 @@ function renderVillains(v) {
         ${b.strategy ? `<div class="strat">${b.strategy}</div>` : ""}
         ${action ? `<div class="last-action">${action}</div>` : ""}
       </div>
-      <div class="bet-chip">${b.bet > 0 ? Math.round(b.bet) : ""}</div>
     `;
     const cards = document.createElement("div");
     cards.className = "cards";
@@ -116,6 +115,11 @@ function renderVillains(v) {
       renderCards(cards, null, 2);
     }
     seat.appendChild(cards);
+    // фишка ставки после карт: карты бота стоят на фиксированном месте
+    const chip = document.createElement("div");
+    chip.className = "bet-chip";
+    chip.textContent = b.bet > 0 ? Math.round(b.bet) : "";
+    seat.appendChild(chip);
     els.villains.appendChild(seat);
   });
 }
