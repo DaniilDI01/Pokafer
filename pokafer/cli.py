@@ -50,7 +50,25 @@ COMMANDS = {
         "прогон мозга по историческим снапшотам (JSONL) + профили игроков",
         "pokafer replay data/snapshots/demo.jsonl",
     ),
+    "eyes-demo": (
+        "scripts/eyes_demo.py",
+        "зрение в реальном времени на нашем столе: экран -> карты и числа -> зеркало",
+        "pokafer eyes-demo --url http://127.0.0.1:8010",
+    ),
+    "eyes-view": (
+        "scripts/eyes_view.py",
+        "зеркало глаз: локальная страница «что видят глаза» (отдельный процесс)",
+        "pokafer eyes-view --port 8020",
+    ),
 }
+
+
+# локальные сервисы проекта: что проверяют status и stop
+SERVICES = (
+    ("HTTP-API мозга", 8000, "/health"),
+    ("веб-стол      ", 8010, "/v1/strategies"),
+    ("зеркало глаз  ", 8020, "/api/health"),
+)
 
 
 def run_script(rel: str, rest: list[str]) -> None:
@@ -75,12 +93,32 @@ def _http_code(url: str) -> int | None:
 # маркеры командной строки процессов, поднятых pokafer (см. cmd_stop)
 _CMD_MARKERS = (
     "pokafer bench", "pokafer arena", "pokafer demo",
-    "pokafer table", "pokafer brain", "pokafer.benchmark",
+    "pokafer table", "pokafer brain", "pokafer eyes", "pokafer.benchmark",
 )
 _SCRIPT_MARKERS = (
     "serve_table.py", "serve_brain.py",
     "scripts/benchmark.py", "scripts/arena.py", "scripts/replay_offline.py",
+    "scripts/eyes_demo.py", "scripts/eyes_view.py", "pokafer.eyes.viewer",
 )
+
+
+def _ancestor_pids(pid: int) -> set[int]:
+    """Сам процесс и вся цепочка родителей.
+
+    Командная строка оболочки вызывающего содержит текст его же команды
+    («pokafer stop; python x.py»): без этого исключения stop убивал терминал,
+    из которого его запустили.
+    """
+    chain = {pid}
+    while pid > 1:
+        try:
+            status = (Path("/proc") / str(pid) / "status").read_text()
+            pid = int(next(line for line in status.splitlines()
+                           if line.startswith("PPid:")).split()[1])
+        except (OSError, StopIteration, ValueError):
+            break
+        chain.add(pid)
+    return chain
 
 
 def _pokafer_processes() -> list[tuple[int, str]]:
@@ -92,14 +130,14 @@ def _pokafer_processes() -> list[tuple[int, str]]:
         (cwd внутри Pokafer/);
       - процесс — python; свой процесс (сам `pokafer stop`) исключён.
     """
-    root = str(ROOT)
     my_pid = os.getpid()
+    ancestors = _ancestor_pids(my_pid)   # терминал/оболочка, откуда нас вызвали
     out: list[tuple[int, str]] = []
     for entry in Path("/proc").iterdir():
         if not entry.name.isdigit():
             continue
         pid = int(entry.name)
-        if pid <= 1 or pid == my_pid:
+        if pid <= 1 or pid in ancestors:
             continue
         try:
             raw = (entry / "cmdline").read_bytes()
@@ -139,10 +177,7 @@ def cmd_stop() -> int:
                     print(f"  SIGKILL -> {pid} (не отреагировал на SIGTERM)")
                 except ProcessLookupError:
                     pass
-    for name, port, probe in (
-        ("HTTP-API мозга", 8000, "/health"),
-        ("веб-стол      ", 8010, "/v1/strategies"),
-    ):
+    for name, port, probe in SERVICES:
         code = _http_code(f"http://127.0.0.1:{port}{probe}")
         print(f"  {name} :{port} — " + ("ВСЁ ЕЩЁ РАБОТАЕТ" if code else "остановлен"))
     return 0
@@ -154,10 +189,7 @@ def cmd_status() -> int:
     print("Pokafer — статус")
     strategies = available()
     print("  стратегии:", "  ".join(f"{k} ({v})" for k, v in strategies.items()))
-    for name, port, probe in (
-        ("HTTP-API мозга", 8000, "/health"),
-        ("веб-стол      ", 8010, "/v1/strategies"),
-    ):
+    for name, port, probe in SERVICES:
         code = _http_code(f"http://127.0.0.1:{port}{probe}")
         print(f"  {name} :{port} — " + (f"запущен (HTTP {code})" if code else "не запущен"))
     logs = ROOT / "data" / "logs"

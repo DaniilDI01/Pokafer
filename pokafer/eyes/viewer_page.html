@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pokafer — зеркало глаз</title>
+<style>
+  :root { --bg:#10141c; --panel:#171d29; --line:#2a3346; --text:#e8edf4; --dim:#8a93a6;
+          --ok:#3ddc84; --warn:#ffb020; --bad:#ff5a5a; --info:#4f8fd6; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { background:var(--bg); color:var(--text); font:14px/1.45 "Segoe UI", system-ui, sans-serif;
+         min-height:100vh; display:flex; flex-direction:column; }
+  header { display:flex; align-items:center; gap:16px; flex-wrap:wrap; padding:8px 16px;
+           border-bottom:1px solid var(--line); }
+  header h1 { font-size:16px; white-space:nowrap; }
+  header h1 span { color:var(--dim); font-weight:400; }
+  #status { color:var(--dim); }
+  #status.ok { color:var(--ok); } #status.bad { color:var(--bad); }
+  #stats { margin-left:auto; color:var(--dim); font-variant-numeric:tabular-nums; white-space:nowrap; }
+  #stats b { color:var(--text); font-weight:600; }
+  main { flex:1; display:flex; align-items:flex-start; justify-content:center; padding:12px; overflow:auto; }
+  canvas { max-width:100%; height:auto; background:var(--panel); border:1px solid var(--line); border-radius:8px; }
+  #home { max-width:720px; margin:8vh auto; padding:0 20px; }
+  #home p { color:var(--dim); margin-bottom:12px; }
+  #home li { margin:6px 0; }
+  #home a { color:var(--info); }
+  code { background:var(--panel); padding:1px 6px; border-radius:5px; }
+  .legend { display:flex; gap:14px; flex-wrap:wrap; color:var(--dim); font-size:12px; padding:0 16px 8px; }
+  .legend i { display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:5px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Pokafer <span>— зеркало глаз</span></h1>
+  <span id="status">подключение…</span>
+  <span id="stats"></span>
+</header>
+<div class="legend" id="legend" hidden>
+  <span><i style="background:#3ddc84"></i>карта / число прочитано</span>
+  <span><i style="background:#ffb020"></i>число прочитано неуверенно</span>
+  <span><i style="background:#4f8fd6"></i>рубашка</span>
+  <span><i style="background:#ff5a5a"></i>не распознано</span>
+  <span><i style="background:#555f73"></i>пустой слот</span>
+</div>
+<main><canvas id="view" width="1280" height="720" hidden></canvas><div id="home" hidden></div></main>
+
+<script>
+"use strict";
+/* Одна страница на всё: без сессии в адресе — список столов, с сессией — живой кадр.
+   Рисует только пришедшие с сервера данные: на каждый кадр — одна отрисовка
+   холста, без таймеров и анимаций. */
+const session = decodeURIComponent(location.pathname.replace(/^\/view\//, "").replace(/\/$/, ""));
+const $ = (id) => document.getElementById(id);
+const wsBase = (location.protocol === "https:" ? "wss://" : "ws://") + location.host;
+const COLOR = { face:"#3ddc84", back:"#4f8fd6", empty:"#555f73", unknown:"#ff5a5a",
+                number:"#3ddc84", low:"#ffb020", none:"#8a93a6" };
+
+function setStatus(text, cls) { const el = $("status"); el.textContent = text; el.className = cls || ""; }
+
+/* ---------- список сессий ---------- */
+async function home() {
+  $("view").hidden = true; $("legend").hidden = true; $("home").hidden = false;
+  const res = await fetch("/api/sessions").then((r) => r.json()).catch(() => []);
+  let html = "<h2 style='margin-bottom:12px'>Открытые столы</h2>";
+  if (!res.length) {
+    html += "<p>Конвейер глаз сейчас не запущен.</p><p>Запустите:</p><p><code>pokafer eyes-demo --url http://127.0.0.1:8010</code></p>";
+  } else {
+    html += "<ul>" + res.map((s) =>
+      `<li><a href="/view/${encodeURIComponent(s.session)}">${s.session}</a> — <code>${s.url || "?"}</code></li>`).join("") + "</ul>";
+  }
+  $("home").innerHTML = html;
+}
+
+/* ---------- живой кадр ---------- */
+const canvas = $("view"), ctx = canvas.getContext("2d");
+let bitmap = null, last = null, frames = 0, fpsT = performance.now(), fps = 0;
+
+function label(text, x, y, color, inside) {
+  ctx.font = "bold 13px system-ui, sans-serif";
+  const w = ctx.measureText(text).width + 10;
+  const ty = inside ? y + 3 : y - 18;
+  ctx.fillStyle = "rgba(10,13,20,.82)";
+  ctx.fillRect(x, ty < 0 ? y + 3 : ty, w, 16);
+  ctx.fillStyle = color;
+  ctx.textBaseline = "top";
+  ctx.fillText(text, x + 5, (ty < 0 ? y + 3 : ty) + 1);
+}
+
+function draw() {
+  const s = last;
+  if (canvas.width !== s.size[0] || canvas.height !== s.size[1]) {
+    canvas.width = s.size[0]; canvas.height = s.size[1];
+  }
+  if (bitmap) ctx.drawImage(bitmap, 0, 0);
+  else { ctx.fillStyle = "#171d29"; ctx.fillRect(0, 0, canvas.width, canvas.height); }
+  ctx.lineWidth = 2;
+  const seats = Object.fromEntries((s.seats || []).map((x) => [x.seat, x.state]));
+  for (const c of s.cards) {
+    const [x, y, w, h] = c.rect;
+    const seat = c.kind === "seat" ? c.path.split(".")[1] : null;
+    if (seat && seats[seat] !== "unclear") {
+      // место в ясном состоянии: рисуем только то, что несёт информацию
+      const isBack = c.path.includes(".backs");
+      const show = seats[seat] === "hidden" ? isBack && c.path.endsWith("[0]")
+                 : seats[seat] === "revealed" ? c.state === "face" : false;
+      if (!show) continue;
+      ctx.strokeStyle = seats[seat] === "hidden" ? COLOR.back : COLOR.face;
+      ctx.strokeRect(x + 1, y + 1, w - 2, h - 2);
+      if (c.state === "face") label(c.label, x, y, COLOR.face, false);
+      continue;
+    }
+    ctx.strokeStyle = COLOR[c.state] || COLOR.unknown;
+    if (c.state === "empty") { ctx.setLineDash([3, 4]); ctx.lineWidth = 1; }
+    ctx.strokeRect(x + 1, y + 1, w - 2, h - 2);
+    ctx.setLineDash([]); ctx.lineWidth = 2;
+    if (c.state === "face") label(c.label, x, y, COLOR.face, false);
+    else if (c.state === "unknown") label("?" + (c.nearest ? " " + c.nearest : ""), x, y, COLOR.unknown, false);
+    else if (c.state === "back") label("рубашка", x, y, COLOR.back, false);
+  }
+  for (const n of s.numbers) {
+    const [x, y, w, h] = n.rect;
+    const color = COLOR[n.state] || COLOR.unknown;
+    ctx.strokeStyle = color;
+    if (n.state === "empty") { ctx.setLineDash([2, 5]); ctx.lineWidth = 1; }
+    ctx.strokeRect(x + 1, y + 1, w - 2, h - 2);
+    ctx.setLineDash([]); ctx.lineWidth = 2;
+    if (n.state === "number" || n.state === "low") {
+      label(n.text + (n.state === "low" ? " ?" : ""), x + w + 4, y, color, false);
+    } else if (n.state === "none") {
+      label("—", x + w + 4, y, COLOR.none, false);
+    }
+  }
+  frames += 1;
+  const now = performance.now();
+  if (now - fpsT >= 1000) { fps = frames * 1000 / (now - fpsT); frames = 0; fpsT = now; }
+  const t = s.timings || {};
+  $("stats").innerHTML = `кадр <b>#${s.seq}</b> · <b>${fps.toFixed(1)}</b> кдр/с · ` +
+    `карты <b>${t.cards ?? "?"}</b> мс · числа <b>${t.numbers ?? "?"}</b> мс · всего <b>${t.total ?? "?"}</b> мс`;
+}
+
+async function onMessage(ev) {
+  if (typeof ev.data === "string") {          // служебное сообщение зеркала
+    const msg = JSON.parse(ev.data);
+    setStatus(msg.text || "", msg.ok === false ? "bad" : msg.ok ? "ok" : "");
+    return;
+  }
+  const buf = new Uint8Array(ev.data);
+  const n = new DataView(ev.data).getUint32(0, true);
+  const state = JSON.parse(new TextDecoder().decode(buf.subarray(4, 4 + n)));
+  const jpeg = buf.subarray(4 + n);
+  if (jpeg.length) {
+    const next = await createImageBitmap(new Blob([jpeg], { type: "image/jpeg" }));
+    if (bitmap) bitmap.close();
+    bitmap = next;
+  }
+  last = state;
+  setStatus("живой кадр", "ok");
+  draw();
+}
+
+function connect() {
+  const ws = new WebSocket(`${wsBase}/ws/${encodeURIComponent(session)}`);
+  ws.binaryType = "arraybuffer";
+  ws.onmessage = onMessage;
+  ws.onclose = () => { setStatus("зеркало недоступно — переподключение…", "bad"); setTimeout(connect, 1500); };
+  ws.onerror = () => ws.close();
+}
+
+if (session && session !== location.pathname) {
+  $("view").hidden = false; $("legend").hidden = false;
+  document.title = `Pokafer — зеркало глаз: ${session}`;
+  connect();
+} else {
+  home();
+  setInterval(home, 2000);
+}
+</script>
+</body>
+</html>

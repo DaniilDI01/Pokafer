@@ -1,131 +1,108 @@
 #!/usr/bin/env python3
-"""Тест точности распознавания карт против ground truth (живая сессия).
+"""Приёмочный тест глаз: точность чтения карт на живом столе против правды.
 
-    python scripts/test_card_accuracy.py [--seconds 60]
+    python scripts/test_card_accuracy.py [--seconds 60] [--bots 5]
 
-Играет сессию на нашем столе (DOM-клики калибровки), каждый стабильный кадр
-сравнивает шаблонное распознавание с /debug/state. Три барьера честности
-пары «кроп<->правда»: стабильность сервера (правда до/после кадра равна),
-свежесть DOM (отрисованные карты == правда) и устоявшаяся краска (два
-подряд скриншота идентичны — CDP может снять кадр до отрисовки).
-Это приёмочный тест глаз из PLAN_EYES.md (карты >= 99%).
+Стол играет сам с собой (герой — чек/колл), каждый замороженный кадр читается
+ОДНИМИ ПИКСЕЛЯМИ (CardReader: шаблоны пресета) и сверяется с правдой сервера.
+Правда — pokafer/eyes/truth.py: мост к столу для калибровки и тестов, рантайму
+глаз DOM недоступен.
+
+Проверяются все состояния слотов: карты героя, борда и вскрытые карты, рубашки,
+пустые слоты. Критерий PLAN_EYES.md: карты >= 99% (не меньше 200 проверок
+карт); рубашки и пустые слоты — тоже >= 99%. Код выхода 0 — тест пройден.
 """
 from __future__ import annotations
 
 import argparse
-import json
-import time
-import urllib.request
+from collections import defaultdict
 
-from PIL import Image, ImageChops
-
-from pokafer.eyes.browser import TableBrowser
-from pokafer.eyes.cards import DOM_CARDS_JS, CardTemplates
+from pokafer.eyes.cards import CardReader
 from pokafer.eyes.sites import preset_for_domain
+from pokafer.eyes.slots import slot_rect
+from pokafer.eyes.truth import TableTruthFeed, expected_cards
 
-POS_ORDER = ["pos_left", "pos_tl", "pos_top", "pos_tr", "pos_right"]
+FACE_MIN = 200       # минимум проверенных карт за прогон
+ACCURACY = 0.99
 
 
-def stable_frame(b: TableBrowser, settle_ms: int = 70) -> Image.Image | None:
-    """Кадр с устоявшейся краской: два подряд скриншота идентичны."""
-    a = b.screenshot()
-    time.sleep(settle_ms / 1000)
-    c = b.screenshot()
-    if ImageChops.difference(a, c).getbbox() is None:
-        return c
-    return None
+def _judge(path: str, want, got) -> tuple[str, bool]:
+    """Категория проверки и верно ли прочитано."""
+    if want == "back":
+        return "рубашки", got.state == "back"
+    if want == "covered":
+        return "под рубашкой", got.state == "unknown"  # нельзя принять за пусто/карту
+    if want is None:
+        return "пустые", got.state == "empty"
+    category = {"hero": "карты героя", "board": "карты борда"}.get(
+        path.split(".")[0], "вскрытые карты")
+    return category, got.state == "face" and got.label == want
 
 
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--url", default="http://127.0.0.1:8011")
+    p.add_argument("--viewport", default="1280x720")
     p.add_argument("--seconds", type=int, default=60)
     p.add_argument("--bots", type=int, default=5)
+    p.add_argument("--screen", action="store_true",
+                   help="боевой путь захвата: видимое окно + пиксели с экрана (mss)")
     args = p.parse_args()
+    viewport = tuple(int(x) for x in args.viewport.split("x"))
+    window = (0, 0, *viewport)
 
-    vw, vh = 1280, 720
     preset = preset_for_domain(args.url.split("//")[-1])
+    reader = CardReader(preset)
+    print(f"пресет {preset.name} (калибровка {reader.calibration_id}): "
+          f"шаблонов карт {len(reader.labels())} в классах "
+          f"{reader.sizes()}")
 
-    templates = CardTemplates("pokafer_local")
-    print(f"меток шаблонов: {len(templates.labels())}")
+    stat: dict[str, list[int]] = defaultdict(lambda: [0, 0])  # категория -> [ок, всего]
+    failures: list[str] = []
+    frames = 0
+    mode = "экран видимого окна (mss)" if args.screen else "CDP-скриншот, headless"
+    print(f"захват: {mode}")
+    with TableTruthFeed(args.url, viewport=viewport, bots=args.bots,
+                        headless=not args.screen, screen=args.screen) as feed:
+        for frame in feed.frames(args.seconds):
+            frames += 1
+            for path, want in expected_cards(frame.truth, preset).items():
+                got = reader.read(frame.image, slot_rect(preset, path, window), slot=path)
+                category, ok = _judge(path, want, got)
+                stat[category][1] += 1
+                stat[category][0] += ok
+                if not ok and len(failures) < 12:
+                    failures.append(f"рука {frame.hand_no}: {path} правда={want!r} "
+                                    f"прочитано={got.state}/{got.label!r} "
+                                    f"(ближайшее {got.nearest!r}, отличия {got.score:.3f})")
+            if frames % 25 == 0:
+                done = sum(n for _, n in stat.values())
+                hit = sum(k for k, _ in stat.values())
+                print(f"  …кадров {frames}, слотов {done}, верно {hit / done:.1%}")
+        anomalies = dict(feed.anomalies)
 
-    b = TableBrowser(args.url, viewport=(vw, vh), headless=True)
-    time.sleep(1.5)
-    for _ in range(args.bots - 1):
-        b.execute("document.getElementById('addBotBtn').click();")
-        time.sleep(0.3)
-
-    def truth() -> dict:
-        return json.loads(urllib.request.urlopen(
-            f"{args.url}/debug/state", timeout=3).read())
-
-    ok = bad = 0
-    failures: list[tuple] = []
-    t0 = time.time()
-    while time.time() - t0 < args.seconds:
-        ta = truth()
-        tb = truth()
-        if not (ta.get("hand_no") == tb.get("hand_no")
-                and ta.get("board") == tb.get("board")
-                and (ta.get("hero") or {}).get("cards") == (tb.get("hero") or {}).get("cards")):
-            continue
-        dom = b.execute(DOM_CARDS_JS)
-        if not (dom["hero"] == (ta.get("hero") or {}).get("cards")
-                and dom["board"] == (ta.get("board") or [])):
-            continue
-        frame = stable_frame(b)
-        if frame is None:
-            continue
-        t = ta
-        pairs: list[tuple[Image.Image, str]] = []
-        hero_cards = (t.get("hero") or {}).get("cards")
-        x, y, w, h = preset.zone("hero.cards", (0, 0, vw, vh))
-        if hero_cards and len(hero_cards) == 2:
-            half = w // 2
-            pairs += [(frame.crop((x, y, x + half, y + h)), hero_cards[0]),
-                      (frame.crop((x + half, y, x + w, y + h)), hero_cards[1])]
-        board = t.get("board") or []
-        bd = preset.zones["board"]
-        for i, cs in enumerate(board):
-            xc = (bd["center_x"] + (i - (len(board) - 1) / 2) * bd["pitch"]) * vw
-            bx, by = int(xc - bd["card_w"] * vw / 2), int(bd["y"] * vh)
-            pairs.append((frame.crop((bx, by, bx + int(bd["card_w"] * vw),
-                                      by + int(bd["card_h"] * vh))), cs))
-        if t.get("hand_over"):
-            for i, bot in enumerate((t.get("bots") or [])[:len(POS_ORDER)]):
-                cards = bot.get("cards")
-                if not cards or len(cards) != 2:
-                    continue
-                x, y, w, h = preset.zone(f"seat.{POS_ORDER[i]}.cards", (0, 0, vw, vh))
-                half = w // 2
-                pairs += [(frame.crop((x, y, x + half, y + h)), cards[0]),
-                          (frame.crop((x + half, y, x + w, y + h)), cards[1])]
-        for img, want in pairs:
-            name, frac = templates.match(img)
-            if name == want:
-                ok += 1
-            else:
-                bad += 1
-                if len(failures) < 10:
-                    failures.append((want, name, round(frac, 4)))
-        b.execute("""
-            const cc = document.getElementById('checkCallBtn');
-            const rb = document.getElementById('raiseBtn');
-            const nx = document.getElementById('nextHandFloat');
-            if (!nx.disabled) { nx.click(); }
-            else if (!cc.disabled) {
-                if (Math.random() < 0.3 && !rb.disabled) rb.click(); else cc.click();
-            }
-        """)
-        time.sleep(0.3)
-
-    total = ok + bad
-    rate = ok / total if total else 0.0
-    print(f"распознано {total} карт: верно {ok} ({rate:.1%}), ошибок {bad}")
+    faces = sum(stat[c][1] for c in ("карты героя", "карты борда", "вскрытые карты"))
+    faces_ok = sum(stat[c][0] for c in ("карты героя", "карты борда", "вскрытые карты"))
+    total = sum(n for _, n in stat.values())
+    hit = sum(k for k, _ in stat.values())
+    print(f"кадров: {frames}, проверок слотов: {total}, верно: {hit} "
+          f"({hit / total:.1%})" if total else "кадров нет")
+    for category, (ok, n) in sorted(stat.items()):
+        print(f"  {category:16} {ok:5}/{n:<5} {ok / n:.2%}" if n else f"  {category}: нет")
     if failures:
-        print("ошибки (правда -> распознано, доля отличий):", failures)
-    b.close()
-    raise SystemExit(0 if rate >= 0.99 and total >= 200 else 1)
+        print("примеры ошибок:")
+        for line in failures:
+            print("   ", line)
+    if anomalies:
+        print("аномалии конвейера (кадры отброшены до проверки):", anomalies)
+
+    rate = faces_ok / faces if faces else 0.0
+    others_ok = all(ok / n >= ACCURACY for c, (ok, n) in stat.items()
+                    if c not in ("карты героя", "карты борда", "вскрытые карты") and n)
+    passed = rate >= ACCURACY and faces >= FACE_MIN and others_ok
+    print(f"ИТОГ: карты {faces_ok}/{faces} = {rate:.2%} "
+          f"(нужно >= 99% и >= {FACE_MIN} карт) — {'ПРОЙДЕН' if passed else 'ПРОВАЛЕН'}")
+    raise SystemExit(0 if passed else 1)
 
 
 if __name__ == "__main__":

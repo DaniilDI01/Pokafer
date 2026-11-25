@@ -85,6 +85,25 @@ curl -s localhost:8000/v1/decide -H 'Content-Type: application/json' \
 | GET | `/v1/schema` | JSON-схема Snapshot |
 | POST | `/v1/decide` | решение по снапшоту |
 
+## Глаза (экран-адаптер, в разработке)
+
+Читают покерный стол **с экрана** пикселями и собирают Snapshot для мозга.
+Готово: карты и числа читаются со 100% точностью на нашем столе (в обоих
+режимах захвата), есть страница «что видят глаза» для отладки. План, формат
+пресета и статус — [docs/PLAN_EYES.md](docs/PLAN_EYES.md).
+
+```bash
+pip install -e ".[eyes,ocr]"                    # браузер/захват + распознавание чисел
+pokafer table --port 8011 --bot-think 0.05      # стол для калибровки/тестов глаз
+python scripts/calibrate_pokafer.py             # слоты карт + зоны чисел, ~70 с (1 раз на машине)
+python scripts/test_card_accuracy.py            # приёмка: карты >= 99% (… --screen: пиксели с экрана)
+python scripts/test_numbers_accuracy.py        # приёмка: числа >= 98% (… --screen)
+pokafer eyes-demo --url http://127.0.0.1:8010   # зрение в реальном времени + зеркало
+```
+
+Числа читает готовая модель распознавания текста (PP-OCRv5, работает локально
+через ONNX Runtime): новый шрифт не требует калибровки — только зоны.
+
 ## Модули
 
 | Пакет | Что внутри |
@@ -92,6 +111,8 @@ curl -s localhost:8000/v1/decide -H 'Content-Type: application/json' \
 | `pokafer.core` | карты и оценщик комбинаций, схема Snapshot/Decision, легальные действия, движок раздачи |
 | `pokafer.brain` | Brain (JSON→JSON), реестр стратегий, память об оппонентах, FastAPI-сервис |
 | `pokafer.adapters` | replay JSONL (офлайн), заготовка парсера PokerNow |
+| `pokafer.web` | веб-стол: WebSocket-сервер (именованные сессии) + клиент без сборки |
+| `pokafer.eyes` | глаза: захват экрана, пресеты сайтов, карты (шаблоны), числа (готовая модель), зеркало, действия |
 | `pokafer.analysis` | VPIP/PFR/AF/fold-vs-bet — фичи для слоя модели оппонента |
 
 ## Стратегии: текущие и план
@@ -121,7 +142,6 @@ curl -s localhost:8000/v1/decide -H 'Content-Type: application/json' \
 - анте не раздаётся (поле в схеме зарезервировано);
 - парсер PokerNow ждёт реальный экспорт для сверки формата (см. докстринг
   `pokafer/adapters/pokernow_csv.py`);
-- боты веб-стола без памяти об оппонентах (в CLI-режиме память есть).
 
 Сайд-поты, сплит-поты и возврат непокрытых ставок реализованы и покрыты
 тестами (`tests/test_engine.py`).
@@ -130,6 +150,7 @@ curl -s localhost:8000/v1/decide -H 'Content-Type: application/json' \
 
 1. GTO-блюпринт: MCCFR на абстракции NLHE (OpenSpiel, CPU/кластер).
 2. ~~Веб-стол: WebSocket-сервер + браузерный клиент~~ ✅ готов (`scripts/serve_table.py`).
+   Глаза (экран-адаптер): карты ✅, числа ✅, зеркало ✅ → трекер → Snapshot → бой (`docs/PLAN_EYES.md`).
 3. Слой оппонента: обучение на собранных снапшотах, эксплойт-контроллер.
 4. GTO-оракул (TexasSolver) для метрик отклонений людей от равновесия.
 5. Slumbot-адаптер для внешнего бенчмарка.
