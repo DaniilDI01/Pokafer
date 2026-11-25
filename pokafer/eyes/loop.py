@@ -1,12 +1,18 @@
-"""Цикл зрения: захват кадра окна -> perceive -> подписчикам зеркала.
+"""Цикл зрения: кадр страницы -> perceive -> подписчикам зеркала.
 
-    watch(browser, card_reader, number_reader, publisher)
+    watch(browser.screenshot, card_reader, number_reader, publisher)
 
-Это первый настоящий боевой цикл глаз: кадр берётся с экрана (видимое окно
-управляемого браузера) или CDP-скриншотом (headless, для тестов), читается
-целиком (pokafer/eyes/perceive.py) и, пока открыта страница отладки,
-публикуется в зеркало. Трекер, мозг и актуатор надстраиваются сверху: им
-нужен тот же поток Perception.
+Это первый настоящий боевой цикл глаз: кадр берётся у браузера (пиксели
+viewport'а), читается целиком (pokafer/eyes/perceive.py) и, пока открыта
+страница отладки, публикуется в зеркало. Трекер, мозг и актуатор
+надстраиваются сверху: им нужен тот же поток Perception.
+
+Окно браузера свободно: его можно таскать, перекрывать другими или уводить за
+край экрана — браузер отдаёт кадры сам. Свернуть окно нельзя (скрытую
+страницу браузер не рисует): источник кадра бросает WindowHidden, кадр
+пропускается, а on_hidden решает, что делать, — обычно разворачивает окно.
+Съём с монитора (capture.ScreenCapture) — запасной путь для страниц вне
+нашего браузера: ему отвечает та же функция кадра grab.
 
 Темп задаёт fps: между кадрами конвейер спит, систему не грузит.
 """
@@ -15,13 +21,13 @@ from __future__ import annotations
 import io
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 
 from PIL import Image
 
 from pokafer.eyes import mirror
-from pokafer.eyes.browser import TableBrowser
-from pokafer.eyes.capture import ScreenCapture
 from pokafer.eyes.cards import CardReader
+from pokafer.eyes.capture import WindowHidden
 from pokafer.eyes.numbers import NumberReader
 from pokafer.eyes.perceive import Perception, perceive
 
@@ -34,43 +40,38 @@ def jpeg_bytes(frame: Image.Image, quality: int = JPEG_QUALITY) -> bytes:
     return buf.getvalue()
 
 
-class FrameSource:
-    """Откуда берутся кадры: экран (видимое окно) или CDP-скриншот (headless)."""
-
-    def __init__(self, browser: TableBrowser, screen: bool):
-        self.browser = browser
-        self._capture: ScreenCapture | None = None
-        if screen:
-            x, y = browser.locate_on_screen()      # где окно лежит на экране
-            vw, vh = browser.viewport
-            self._capture = ScreenCapture((x, y, vw, vh))
-
-    def grab(self) -> Image.Image:
-        if self._capture is not None:
-            return self._capture.grab()
-        return self.browser.screenshot()
-
-    def close(self) -> None:
-        if self._capture is not None:
-            self._capture.close()
+@dataclass(frozen=True)
+class WatchStats:
+    frames: int      # прочитанные кадры
+    hidden: int      # пропущенные: окно было скрыто (свёрнуто, вкладка не активна)
 
 
-def watch(browser: TableBrowser, card_reader: CardReader, number_reader: NumberReader,
-          publisher: mirror.MirrorPublisher | None = None, *, fps: float = 4.0,
-          screen: bool = True, on_perception: Callable[[Perception], None] | None = None,
-          running: Callable[[], bool] | None = None) -> int:
+def watch(grab: Callable[[], Image.Image], card_reader: CardReader,
+          number_reader: NumberReader, publisher: mirror.MirrorPublisher | None = None,
+          *, fps: float = 4.0, on_perception: Callable[[Perception], None] | None = None,
+          on_hidden: Callable[[], None] | None = None,
+          running: Callable[[], bool] | None = None) -> WatchStats:
     """Крутить зрение, пока running() истинно (по умолчанию — до KeyboardInterrupt).
 
-    on_perception получает каждый кадр (трекер, журнал, тесты). Возвращает
-    число обработанных кадров.
+    grab — источник кадров: как правило TableBrowser.screenshot (пиксели
+    страницы из браузера). on_perception получает каждый кадр (трекер, журнал,
+    тесты). WindowHidden от источника — кадр пропускается и вызывается
+    on_hidden (без него окно просто ждут, не спрашивая чаще периода кадра).
     """
-    source = FrameSource(browser, screen)
     period = 1.0 / max(fps, 0.1)
-    seq = 0
+    seq = hidden = 0
     next_at = time.perf_counter()
     try:
         while running is None or running():
-            frame = source.grab()
+            try:
+                frame = grab()
+            except WindowHidden:
+                hidden += 1
+                if on_hidden is not None:
+                    on_hidden()
+                time.sleep(period)
+                next_at = time.perf_counter()
+                continue
             seq += 1
             perception = perceive(frame, card_reader, number_reader, seq)
             if on_perception is not None:
@@ -85,6 +86,4 @@ def watch(browser: TableBrowser, card_reader: CardReader, number_reader: NumberR
                 next_at = time.perf_counter()
     except KeyboardInterrupt:
         pass
-    finally:
-        source.close()
-    return seq
+    return WatchStats(seq, hidden)

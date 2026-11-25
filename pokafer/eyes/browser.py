@@ -6,17 +6,64 @@
 профиле. Браузер указывается именем (chrome/chromium/firefox).
 
 Скриншот driver.get_screenshot_as_png() — это пиксели viewport'а: ровно то,
-что видят распознаватели. Действия — реальные вводные события
-(ActionChains: клики/клавиатура) по координатам, которые выдал трекер.
+что видят распознаватели. Браузер отдаёт их сам, поэтому окно можно таскать,
+сворачивать, перекрывать другими или не показывать вовсе: глаза читают
+страницу, а не монитор. (Съём с монитора — capture.ScreenCapture — остался
+запасным путём для нативных клиентов и проверкой «как на экране» в тестах.)
+Действия — реальные вводные события (ActionChains: клики/клавиатура) по
+координатам, которые выдал трекер.
 """
 from __future__ import annotations
 
+import os
+import signal
 import time
 from pathlib import Path
 
 from PIL import Image
 
+from pokafer.eyes.capture import WindowHidden
+
 _PATCH = 32  # метка совмещения кадра с экраном, px
+COMMAND_TIMEOUT = 15   # сек ожидания ответа браузера на одну команду
+CLOSE_GRACE_SEC = 2.0  # сколько браузеру даётся выйти самому после quit()
+
+
+def _children(pid: int) -> list[tuple[int, bytes]]:
+    """Прямые дети процесса: [(pid, командная строка)] по /proc, то есть в Linux.
+
+    Браузер — ребёнок процесса chromedriver'а. Без /proc список пуст: закрытие
+    браузера остаётся на совести quit().
+    """
+    out = []
+    for entry in Path("/proc").glob("[0-9]*"):
+        try:
+            status = (entry / "status").read_text()
+        except OSError:
+            continue
+        parent = next((line for line in status.splitlines() if line.startswith("PPid:")), "")
+        if parent.split()[1:] == [str(pid)]:
+            try:
+                out.append((int(entry.name), (entry / "cmdline").read_bytes()))
+            except OSError:          # ребёнок успел выйти между чтениями
+                pass
+    return out
+
+
+def _same_process(pid: int, cmdline: bytes) -> bool:
+    """Жив ли ещё тот самый процесс: командная строка совпадает (pid не достался другому)."""
+    try:
+        return Path(f"/proc/{pid}/cmdline").read_bytes() == cmdline
+    except OSError:
+        return False
+
+
+def _profile_dir(cmdline: bytes) -> str | None:
+    """Каталог профиля браузера по его командной строке (аргументы разделены нулём)."""
+    for arg in cmdline.split(b"\0"):
+        if arg.startswith(b"--user-data-dir="):
+            return arg[len(b"--user-data-dir="):].decode()
+    return None
 
 
 class TableBrowser:
@@ -28,6 +75,12 @@ class TableBrowser:
     # машины; потому лица карт стола — спрайты, а шаблоны текста (цифры)
     # снимаются в том режиме, в котором глаза работают.
     RENDER_FLAGS: tuple[str, ...] = ("--disable-lcd-text",)
+    # Свёрнутое или перекрытое окно браузер считает «фоном»: замедляет таймеры
+    # страницы и бережёт redraw. Глазам страница нужна живой, где бы ни лежало
+    # окно: на отрисовку флаги не влияют, только на планирование.
+    LIVE_FLAGS: tuple[str, ...] = ("--disable-backgrounding-occluded-windows",
+                                   "--disable-renderer-backgrounding",
+                                   "--disable-background-timer-throttling")
 
     def __init__(self, url: str, viewport: tuple[int, int] = (1280, 720),
                  browser: str = "chrome", headless: bool = False,
@@ -44,7 +97,7 @@ class TableBrowser:
         opts.add_argument("--disable-extensions")
         opts.add_argument(f"--window-size={vw + 40},{vh + 140}")
         opts.add_argument("--window-position=0,0")
-        for flag in self.RENDER_FLAGS:
+        for flag in (*self.RENDER_FLAGS, *self.LIVE_FLAGS):
             opts.add_argument(flag)
         if headless:
             opts.add_argument("--headless=new")
@@ -53,6 +106,10 @@ class TableBrowser:
 
         self._driver = webdriver.Chrome(options=opts)
         self._driver.set_page_load_timeout(page_load_timeout)
+        # ответа браузера нет дольше — ошибка, а не вечное ожидание: зависший
+        # кадр (окно свернули в момент съёма) не должен заморозить глаза молча
+        self._driver.command_executor.client_config.timeout = float(COMMAND_TIMEOUT)
+        self._browser = _children(self._driver.service.process.pid)   # чтобы закрыть, если quit() не сможет
         self.viewport = (vw, vh)
         self.url = url
         self._driver.get(url)
@@ -90,11 +147,22 @@ class TableBrowser:
     # ---------- восприятие ----------
 
     def screenshot(self) -> Image.Image:
-        """Пиксели viewport'а (то, что видят распознаватели)."""
-        png = self._driver.get_screenshot_as_png()
+        """Пиксели viewport'а (то, что видят распознаватели).
+
+        Кадр отдаёт сам браузер (CDP), а не команда снимка WebDriver: та вдвое
+        медленнее, поднимает перекрытое окно наверх и разворачивает свёрнутое
+        (замерено на Chrome 139). Скрытую страницу браузер не рисует — запрос
+        кадра повис бы навсегда, поэтому скрытое окно проверяется заранее.
+        """
+        import base64
         import io
 
-        img = Image.open(io.BytesIO(png)).convert("RGB")
+        if self._driver.execute_script("return document.visibilityState;") == "hidden":
+            raise WindowHidden("окно браузера свёрнуто или вкладка стола не активна: "
+                               "браузер не рисует скрытую страницу")
+        shot = self._driver.execute_cdp_cmd(
+            "Page.captureScreenshot", {"format": "png", "optimizeForSpeed": True})
+        img = Image.open(io.BytesIO(base64.b64decode(shot["data"]))).convert("RGB")
         vw, vh = self.viewport
         if img.size != (vw, vh):
             img = img.crop((0, 0, vw, vh))
@@ -104,13 +172,23 @@ class TableBrowser:
         """JS в странице — ТОЛЬКО для диагностики/калибровки, не для глаз."""
         return self._driver.execute_script(script, *args)
 
+    @property
+    def profile_dir(self) -> str | None:
+        """Каталог профиля браузера: по нему окно однозначно узнаётся у оконного менеджера.
+
+        Путь профиля вписан в класс окна (WM_CLASS), тогда как заголовок у
+        копий одной страницы одинаков.
+        """
+        return _profile_dir(self._browser[0][1]) if self._browser else None
+
     def locate_on_screen(self) -> tuple[int, int]:
         """Где на экране лежит угол viewport'а окна: (x, y) — область для mss.
 
-        Окно ищется по факту, а не по window.screenX (рамка оконного
-        менеджера и панель браузера дают заранее неизвестное смещение): кадр
-        CDP совмещается с экраном по точному совпадению контрастной метки.
-        Только для наладки захвата: сам боевой захват — пиксели экрана.
+        Запасному пути (съём с монитора, тесты --screen): окно ищется по
+        факту, а не по window.screenX (рамка оконного менеджера и панель
+        браузера дают заранее неизвестное смещение): кадр страницы совмещается
+        с экраном по точному совпадению контрастной метки. Окно при этом
+        должно быть видно целиком.
         """
         from pokafer.eyes.capture import capture_full
 
@@ -126,12 +204,17 @@ class TableBrowser:
 
     # ---------- действия (актатор) ----------
 
-    def click_at(self, x: int, y: int) -> None:
+    def click_at(self, x: int, y: int, park: tuple[int, int] | None = None) -> None:
         """Клик по координатам viewport'а (реальное событие мыши).
 
         origin='viewport' — координаты от левого верхнего угла страницы.
         ActionChains.move_to_element_with_offset в Selenium 4 отсчитывает от
         ЦЕНТРА элемента: клик «по углу body» попадал на пол-экрана мимо.
+
+        park — куда тем же действием увести курсор после клика. Оставленный
+        на кнопке, он держит её подсветку наведения: фон зоны числа на кнопке
+        меняется, и глаза решают, что элемента нет (замерено на нашем столе:
+        сумма колла читалась как «пусто» в каждом втором кадре).
         """
         from selenium.webdriver.common.actions.action_builder import ActionBuilder
         from selenium.webdriver.common.actions.mouse_button import MouseButton
@@ -141,7 +224,20 @@ class TableBrowser:
         mouse.create_pointer_move(origin="viewport", x=int(x), y=int(y))
         mouse.create_pointer_down(button=MouseButton.LEFT)
         mouse.create_pointer_up(button=MouseButton.LEFT)
+        if park is not None:
+            mouse.create_pointer_move(origin="viewport", x=int(park[0]), y=int(park[1]))
         builder.perform()
+
+    def set_window_state(self, state: str) -> None:
+        """Состояние окна браузера: normal | minimized | maximized.
+
+        Разворачивает окно, свёрнутое пользователем (сверху loop.watch):
+        свёрнутую страницу браузер не рисует. Тестам этой же командой окно
+        сворачивают, чтобы проверить это поведение.
+        """
+        window_id = self._driver.execute_cdp_cmd("Browser.getWindowForTarget", {})["windowId"]
+        self._driver.execute_cdp_cmd("Browser.setWindowBounds",
+                                     {"windowId": window_id, "bounds": {"windowState": state}})
 
     def type_text(self, text: str) -> None:
         """Клавиатура: посимвольный ввод в активный элемент."""
@@ -157,10 +253,38 @@ class TableBrowser:
         ActionChains(self._driver).send_keys(getattr(Keys, key_name, key_name)).perform()
 
     def close(self) -> None:
+        """Закрыть браузер; не закрылся сам — остановить принудительно.
+
+        С зависшим сеансом (например, кадр свёрнутого окна) quit() не
+        справляется: ждёт ответа двадцать секунд и ОСТАВЛЯЕТ окно браузера на
+        экране (проверено). Поэтому после quit() проверяется сам процесс.
+        """
+        driver, self._driver = self._driver, None
+        if driver is None:
+            return
         try:
-            self._driver.quit()
+            driver.quit()
         except Exception:
             pass
+        for pid, cmdline in self._browser:
+            self._ensure_gone(pid, cmdline)
+
+    @staticmethod
+    def _ensure_gone(pid: int, cmdline: bytes) -> None:
+        def wait() -> None:
+            deadline = time.monotonic() + CLOSE_GRACE_SEC
+            while _same_process(pid, cmdline) and time.monotonic() < deadline:
+                time.sleep(0.05)
+
+        wait()                                   # после нормального quit() браузер выходит сам
+        for sig in (signal.SIGTERM, signal.SIGKILL):
+            if not _same_process(pid, cmdline):
+                return
+            try:
+                os.kill(pid, sig)
+            except OSError:
+                return
+            wait()
 
     def __enter__(self):
         return self

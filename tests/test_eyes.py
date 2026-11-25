@@ -1,7 +1,14 @@
 """Глаза без браузера: пресет со слотами, читатель карт, ожидания по правде,
-поиск окна на экране. Живая проверка (стол + браузер) — scripts/test_card_accuracy.py."""
+поиск окна на экране, цикл зрения, закрытие браузера. Живая проверка (стол +
+браузер) — scripts/test_card_accuracy.py, test_numbers_accuracy.py,
+test_window_states.py."""
 import json
+import os
+import subprocess
+import sys
+import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from PIL import Image, ImageDraw, ImageFont
@@ -428,17 +435,20 @@ def test_mirror_session_name_and_bad_memory():
 
 # ---------- ядро рантайма: что глаза видят в кадре ----------
 
-def test_perceive_reads_cards_and_numbers(reader):
+def _number_reader(preset):
+    """Читатель чисел без модели: одна зона стека (поле 30x18 на (150, 5)), ответ «100»."""
     from pokafer.eyes.numbers import NumberReader
-    from pokafer.eyes.perceive import perceive
-    preset = reader.preset
-    preset.zones["hero"]["stack"] = (0.75, 0.05, 0.15, 0.18)     # поле числа: (150, 5, 30, 18)
+    preset.zones["hero"]["stack"] = (0.75, 0.05, 0.15, 0.18)
     preset.zones["numbers"] = {"hero.stack": _luma(FACE)}
-    numbers = NumberReader(preset, engine=_StubEngine(("100", 0.98)))
+    return NumberReader(preset, engine=_StubEngine(("100", 0.98)))
+
+
+def test_perceive_reads_cards_and_numbers(reader):
+    from pokafer.eyes.perceive import perceive
     frame = _frame((10, synth_card("A", "s")))                    # первый слот героя
     frame.paste(synth_card("K", "s"), (30, 10))                   # второй слот героя (Ks есть в шаблонах)
     frame.paste(Image.new("RGB", (30, 18), FACE), (150, 5))       # «поле числа» с фоном, как в пресете
-    p = perceive(frame, reader, numbers, seq=7)
+    p = perceive(frame, reader, _number_reader(reader.preset), seq=7)
     cards = {c.slot.path: c.reading for c in p.cards}
     assert (cards["hero.cards[0]"].state, cards["hero.cards[0]"].label) == ("face", "As")
     assert (cards["hero.cards[1]"].state, cards["hero.cards[1]"].label) == ("face", "Ks")
@@ -473,3 +483,225 @@ def test_seat_cards_summary(c0, c1, b0, b1, want):
                              reading=SimpleNamespace(state=state, label="As" if state == "face" else None))
              for path, state in readings.items()]
     assert _seat_cards(cards)["pos_top"].state == want
+
+
+# ---------- цикл зрения ----------
+
+def test_watch_reads_every_frame_and_skips_hidden_window(reader):
+    """Свернули окно — источник бросил WindowHidden: кадр пропущен, окно развёрнуто, счёт честный."""
+    from pokafer.eyes import loop
+    from pokafer.eyes.capture import WindowHidden
+    frame = _frame((10, synth_card("A", "s")))
+    grabs, seen, restored = [], [], []
+
+    def grab():
+        grabs.append(1)
+        if len(grabs) == 2:
+            raise WindowHidden("окно свёрнуто")
+        return frame
+
+    stats = loop.watch(grab, reader, _number_reader(reader.preset), fps=1000,
+                       on_perception=seen.append, on_hidden=lambda: restored.append(1),
+                       running=lambda: len(grabs) < 5)
+    assert (stats.frames, stats.hidden) == (4, 1)
+    assert [p.seq for p in seen] == [1, 2, 3, 4]                  # номера кадров — подряд
+    assert restored == [1]
+
+
+def test_watch_publishes_to_mirror_only_with_a_viewer(reader):
+    from pokafer.eyes import loop, mirror
+    session = "pytest-watch"
+    publisher = mirror.MirrorPublisher(session, "http://table")
+    frame = _frame((10, synth_card("A", "s")))
+    try:
+        grabs = []
+        stats = loop.watch(lambda: grabs.append(1) or frame, reader, _number_reader(reader.preset),
+                           publisher, fps=1000, running=lambda: len(grabs) < 3)
+        assert stats.frames == 3 and publisher.seq == 0           # страницу никто не открыл — не кодируем
+
+        subscriber = mirror.MirrorSubscriber(session)
+        try:
+            subscriber.subscribe(True)
+            grabs.clear()
+            loop.watch(lambda: grabs.append(1) or frame, reader, _number_reader(reader.preset),
+                       publisher, fps=1000, running=lambda: len(grabs) < 3)
+            state, jpeg = mirror.decode(subscriber.poll())        # зритель получает свежий кадр
+            assert state["seq"] == 3 and jpeg[:2] == b"\xff\xd8"
+        finally:
+            subscriber.subscribe(False)
+            subscriber.close()
+    finally:
+        publisher.close()
+
+
+# ---------- актатор ----------
+
+class _FakeBrowser:
+    viewport = (200, 100)
+
+    def __init__(self):
+        self.clicks = []
+
+    def click_at(self, x, y, park=None):
+        self.clicks.append((x, y, park))
+
+
+def test_actuator_parks_cursor_off_the_button(eyes_dir):
+    """После клика курсор уходит в точку пресета: под ним кнопка подсвечена и её число не читается."""
+    from pokafer.eyes.actuator import Actuator
+    preset = sites.load_preset("t")
+    preset.zones["act"] = {"check": (0.5, 0.5, 0.1, 0.1), "park": (0.9, 0.9, 0.02, 0.04)}
+    browser = _FakeBrowser()
+    Actuator(browser, preset).check_or_call()
+    assert browser.clicks == [(110, 55, (182, 92))]
+
+
+def test_actuator_without_parking_point_leaves_cursor(eyes_dir):
+    from pokafer.eyes.actuator import Actuator
+    preset = sites.load_preset("t")
+    preset.zones["act"] = {"check": (0.5, 0.5, 0.1, 0.1)}
+    browser = _FakeBrowser()
+    actuator = Actuator(browser, preset)
+    assert actuator.park is None
+    actuator.check_or_call()
+    assert browser.clicks == [(110, 55, None)]
+
+
+# ---------- стенд правды: сверка и «действие принято» ----------
+
+def test_judging_rules():
+    from pokafer.eyes.cards import Reading
+    from pokafer.eyes.numbers import NumberReading
+    from pokafer.eyes.truth import NO_NUMBER, card_ok, number_ok
+    assert card_ok("As", Reading("face", "As")) and not card_ok("Ah", Reading("face", "As"))
+    assert card_ok("back", Reading("back")) and not card_ok("back", Reading("empty"))
+    assert card_ok("covered", Reading("unknown"))                 # рубашка под слотом открытых карт
+    assert not card_ok("covered", Reading("empty"))              # нельзя принять за пусто
+    assert card_ok(None, Reading("empty")) and not card_ok(None, Reading("unknown"))
+    assert number_ok("12.5", NumberReading("number", 12.5, "12.5", 0.9))
+    assert not number_ok("12.5", NumberReading("low", 12.5, "12.5", 0.3))
+    assert number_ok(NO_NUMBER, NumberReading("none", text="Чек")) and not number_ok(None, NumberReading("none"))
+    assert number_ok(None, NumberReading("empty")) and not number_ok("0", NumberReading("empty"))
+
+
+def _frozen_flop():
+    """Герой на флопе, никто не ставил."""
+    return {"hand_no": 3, "hand_over": False, "to_act": 1, "board": ["As", "Kd", "2c"], "pot": 6.0,
+            "hero": {"stack": 195.0, "bet": 0.0},
+            "bots": [{"stack": 195.0, "bet": 0.0, "folded": False}, {"stack": 150.0, "bet": 0.0, "folded": True}]}
+
+
+def test_state_key_notices_bet_behind_the_hero():
+    """Герой чекнул, бот за ним поставил: та же улица, снова ход героя — а состояние другое."""
+    from pokafer.eyes.truth import _key
+    before = _frozen_flop()
+    after = json.loads(json.dumps(before))
+    after.update(to_act=2)                                      # мгновение: ходит бот
+    assert _key(before) != _key(after)
+    after.update(to_act=1, pot=11.0)                            # бот поставил 5: ход вернулся к герою
+    after["bots"][0].update(stack=190.0, bet=5.0)
+    assert _key(before) != _key(after)
+    assert _key(before) == _key(json.loads(json.dumps(before)))
+
+
+def test_accepted_waits_for_server_to_leave_the_state():
+    from pokafer.eyes.truth import TableTruthFeed
+    feed = TableTruthFeed.__new__(TableTruthFeed)
+    after = json.loads(json.dumps(_frozen_flop()))
+    after["hero"].update(stack=193.0, bet=2.0)
+    feed.truth = lambda: after
+    assert feed.accepted(_frozen_flop(), timeout=0.2)
+    feed.truth = lambda: _frozen_flop()                         # сервер не сдвинулся — не принято
+    assert not feed.accepted(_frozen_flop(), timeout=0.05)
+
+
+# ---------- браузер: закрытие ----------
+
+def _sleeper():
+    return subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+
+
+def _identity(proc):
+    """(pid, командная строка) — так TableBrowser запоминает браузер при старте.
+
+    Сразу после запуска командная строка процесса в /proc ещё пустует: ждём её.
+    """
+    path = Path(f"/proc/{proc.pid}/cmdline")
+    for _ in range(200):
+        cmdline = path.read_bytes()
+        if cmdline:
+            return proc.pid, cmdline
+        time.sleep(0.02)
+    raise AssertionError("процесс так и не стартовал")
+
+
+@pytest.mark.skipif(not Path("/proc").exists(), reason="процессы читаются из /proc (Linux)")
+def test_browser_close_stops_what_a_jammed_session_leaves(monkeypatch):
+    """quit() не справился с зависшим сеансом — браузер всё равно остановлен, и быстро."""
+    from pokafer.eyes import browser as module
+    victim = _sleeper()
+    try:
+        def jammed():
+            raise RuntimeError("сеанс завис: ответа нет")
+
+        ident = _identity(victim)
+        table = module.TableBrowser.__new__(module.TableBrowser)
+        table._driver = SimpleNamespace(quit=jammed)
+        table._browser = [ident]
+        monkeypatch.setattr(module, "CLOSE_GRACE_SEC", 0.2)
+        started = time.perf_counter()
+        table.close()
+        assert table._driver is None
+        assert not module._same_process(*ident)
+        assert victim.wait(timeout=5) < 0                    # завершён сигналом, а не сам
+        assert time.perf_counter() - started < 5
+    finally:
+        if victim.poll() is None:
+            victim.kill()
+            victim.wait()
+
+
+def test_browser_close_is_instant_when_browser_exited():
+    from pokafer.eyes import browser as module
+    quits = []
+    table = module.TableBrowser.__new__(module.TableBrowser)
+    table._driver = SimpleNamespace(quit=lambda: quits.append(1))
+    table._browser = [(2 ** 22 + 7, b"already-exited")]     # pid, которого не бывает
+    started = time.perf_counter()
+    table.close()
+    table.close()                                           # повторное закрытие ничего не делает
+    assert quits == [1] and time.perf_counter() - started < 0.5
+
+
+@pytest.mark.skipif(not Path("/proc").exists(), reason="процессы читаются из /proc (Linux)")
+def test_children_lists_direct_children_with_identity():
+    from pokafer.eyes.browser import _children
+    victim = _sleeper()
+    try:
+        assert _identity(victim) in _children(os.getpid())
+    finally:
+        victim.kill()
+        victim.wait()
+
+
+# ---------- браузер: профиль (однозначный признак окна у оконного менеджера) ----------
+
+_CHROME_CMDLINE = (b"/opt/google/chrome/chrome --allow-pre-commit-input\x00"
+                   b"--user-data-dir=/tmp/.org.chromium.Chromium.pd4IcD\x00--window-position=0,0\x00data:,\x00")
+
+
+def test_profile_dir_is_parsed_from_nul_separated_cmdline():
+    """Аргументы команды разделены нулём: «не-пробел» захватил бы и всё, что дальше."""
+    from pokafer.eyes import browser as module
+    assert module._profile_dir(_CHROME_CMDLINE) == "/tmp/.org.chromium.Chromium.pd4IcD"
+    assert module._profile_dir(b"/usr/bin/chromedriver\x00--port=9515\x00") is None
+
+
+def test_browser_profile_dir_property():
+    from pokafer.eyes import browser as module
+    table = module.TableBrowser.__new__(module.TableBrowser)
+    table._browser = [(1, _CHROME_CMDLINE)]
+    assert table.profile_dir == "/tmp/.org.chromium.Chromium.pd4IcD"
+    table._browser = []                                    # браузер не заведён (не Linux)
+    assert table.profile_dir is None
+

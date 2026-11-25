@@ -12,7 +12,8 @@
 (фишка без ставки не должна дать числа). Критерий PLAN_EYES.md: числа >= 98%
 в каждой категории. Код выхода 0 — тест пройден.
 
---screen: боевой путь захвата — видимое окно, пиксели с экрана (mss).
+Кадры браузер отдаёт сам (по умолчанию — headless). --screen: запасной путь,
+пиксели с монитора поверх видимого окна (mss).
 """
 from __future__ import annotations
 
@@ -23,18 +24,10 @@ from collections import defaultdict
 
 from pokafer.eyes.numbers import NumberReader
 from pokafer.eyes.sites import preset_for_domain
-from pokafer.eyes.truth import NO_NUMBER, TableTruthFeed, expected_numbers
+from pokafer.eyes.truth import NO_NUMBER, TableTruthFeed, expected_numbers, number_ok
 
 ACCURACY = 0.98
 CATEGORY = {"stack": "стеки", "bet": "ставки", "amount": "банк", "call_amount": "сумма колла"}
-
-
-def _ok(want, got) -> bool:
-    if want == NO_NUMBER:
-        return got.state == "none"
-    if want is None:
-        return got.state == "empty"
-    return got.state == "number" and got.value == float(want)
 
 
 def main() -> None:
@@ -44,7 +37,7 @@ def main() -> None:
     p.add_argument("--seconds", type=int, default=60)
     p.add_argument("--bots", type=int, default=5)
     p.add_argument("--screen", action="store_true",
-                   help="боевой путь захвата: видимое окно + пиксели с экрана (mss)")
+                   help="запасной путь: пиксели с экрана видимого окна (mss)")
     args = p.parse_args()
     viewport = tuple(int(x) for x in args.viewport.split("x"))
 
@@ -52,8 +45,9 @@ def main() -> None:
     reader = NumberReader(preset)
     paths = reader.paths()
     layouts: list[list[str]] = preset.zones["meta"]["seat_layouts"]
+    mode = "экран видимого окна (mss)" if args.screen else "пиксели страницы от браузера, headless"
     print(f"пресет {preset.name} (калибровка {preset.calibration_id}); зон чисел: {len(paths)}; "
-          f"захват: {'экран видимого окна (mss)' if args.screen else 'CDP-скриншот, headless'}")
+          f"захват: {mode}")
 
     stat: dict[str, list[int]] = defaultdict(lambda: [0, 0])  # разрез -> [верно, всего]
     fails: list[str] = []
@@ -72,7 +66,7 @@ def main() -> None:
                 t1 = time.perf_counter()
                 got = reader.read(frame.image, path)
                 per_zone.append((time.perf_counter() - t1) * 1000)
-                ok = _ok(want[path], got)
+                ok = number_ok(want[path], got)
                 kind = path.rsplit(".", 1)[1]
                 for key in ("ВСЁ", CATEGORY[kind],
                             f"{CATEGORY[kind]}: {'число' if want[path] not in (None, NO_NUMBER) else 'пусто' if want[path] is None else 'нет числа'}"):

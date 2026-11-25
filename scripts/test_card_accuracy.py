@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 """Приёмочный тест глаз: точность чтения карт на живом столе против правды.
 
-    python scripts/test_card_accuracy.py [--seconds 60] [--bots 5]
+    python scripts/test_card_accuracy.py [--seconds 60] [--bots 5] [--screen]
 
 Стол играет сам с собой (герой — чек/колл), каждый замороженный кадр читается
 ОДНИМИ ПИКСЕЛЯМИ (CardReader: шаблоны пресета) и сверяется с правдой сервера.
 Правда — pokafer/eyes/truth.py: мост к столу для калибровки и тестов, рантайму
 глаз DOM недоступен.
+
+Кадры браузер отдаёт сам (по умолчанию — headless). --screen: запасной путь —
+пиксели с монитора (mss).
 
 Проверяются все состояния слотов: карты героя, борда и вскрытые карты, рубашки,
 пустые слоты. Критерий PLAN_EYES.md: карты >= 99% (не меньше 200 проверок
@@ -20,23 +23,21 @@ from collections import defaultdict
 from pokafer.eyes.cards import CardReader
 from pokafer.eyes.sites import preset_for_domain
 from pokafer.eyes.slots import slot_rect
-from pokafer.eyes.truth import TableTruthFeed, expected_cards
+from pokafer.eyes.truth import TableTruthFeed, card_ok, expected_cards
 
 FACE_MIN = 200       # минимум проверенных карт за прогон
 ACCURACY = 0.99
 
 
-def _judge(path: str, want, got) -> tuple[str, bool]:
-    """Категория проверки и верно ли прочитано."""
+def _category(path: str, want) -> str:
+    """Разрез статистики для слота: want — как в expected_cards."""
     if want == "back":
-        return "рубашки", got.state == "back"
+        return "рубашки"
     if want == "covered":
-        return "под рубашкой", got.state == "unknown"  # нельзя принять за пусто/карту
+        return "под рубашкой"
     if want is None:
-        return "пустые", got.state == "empty"
-    category = {"hero": "карты героя", "board": "карты борда"}.get(
-        path.split(".")[0], "вскрытые карты")
-    return category, got.state == "face" and got.label == want
+        return "пустые"
+    return {"hero": "карты героя", "board": "карты борда"}.get(path.split(".")[0], "вскрытые карты")
 
 
 def main() -> None:
@@ -46,7 +47,7 @@ def main() -> None:
     p.add_argument("--seconds", type=int, default=60)
     p.add_argument("--bots", type=int, default=5)
     p.add_argument("--screen", action="store_true",
-                   help="боевой путь захвата: видимое окно + пиксели с экрана (mss)")
+                   help="запасной путь: пиксели с экрана видимого окна (mss)")
     args = p.parse_args()
     viewport = tuple(int(x) for x in args.viewport.split("x"))
     window = (0, 0, *viewport)
@@ -60,7 +61,7 @@ def main() -> None:
     stat: dict[str, list[int]] = defaultdict(lambda: [0, 0])  # категория -> [ок, всего]
     failures: list[str] = []
     frames = 0
-    mode = "экран видимого окна (mss)" if args.screen else "CDP-скриншот, headless"
+    mode = "экран видимого окна (mss)" if args.screen else "пиксели страницы от браузера, headless"
     print(f"захват: {mode}")
     with TableTruthFeed(args.url, viewport=viewport, bots=args.bots,
                         headless=not args.screen, screen=args.screen) as feed:
@@ -68,7 +69,7 @@ def main() -> None:
             frames += 1
             for path, want in expected_cards(frame.truth, preset).items():
                 got = reader.read(frame.image, slot_rect(preset, path, window), slot=path)
-                category, ok = _judge(path, want, got)
+                category, ok = _category(path, want), card_ok(want, got)
                 stat[category][1] += 1
                 stat[category][0] += ok
                 if not ok and len(failures) < 12:

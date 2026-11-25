@@ -22,12 +22,17 @@ import uuid
 from collections import Counter
 from collections.abc import Iterator
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from PIL import Image, ImageChops
 
 from pokafer.eyes.browser import TableBrowser
-from pokafer.eyes.capture import ScreenCapture
+from pokafer.eyes.capture import ScreenCapture, WindowHidden
 from pokafer.eyes.sites import Preset
+
+if TYPE_CHECKING:  # читатели — только для подписей; сама правда от них не зависит
+    from pokafer.eyes.cards import Reading
+    from pokafer.eyes.numbers import NumberReading
 
 HERO_SEAT = 1
 
@@ -93,9 +98,19 @@ return out;
 
 
 def _key(truth: dict) -> tuple:
-    """Состояние, меняющееся после ЛЮБОГО действия героя."""
+    """Состояние, меняющееся после ЛЮБОГО действия героя.
+
+    Кроме номера руки, борда и номера ходящего — банк и деньги на столе.
+    Одних первых трёх мало: герой чекает, бот за ним ставит — и ход
+    возвращается к герою на той же улице; действие принято, а прежний ключ
+    этого не замечал и стенд отправлял действие вторично.
+    """
+    hero = truth.get("hero") or {}
+    bots = truth.get("bots") or []
     return (truth.get("hand_no"), bool(truth.get("hand_over")),
-            truth.get("to_act"), tuple(truth.get("board") or []))
+            truth.get("to_act"), tuple(truth.get("board") or []), truth.get("pot"),
+            hero.get("stack"), hero.get("bet"),
+            tuple((b.get("stack"), b.get("bet"), bool(b.get("folded"))) for b in bots))
 
 
 def is_frozen(truth: dict) -> bool:
@@ -174,6 +189,26 @@ def expected_numbers(truth: dict, paths, seat_layouts: list[list[str]]) -> dict[
         else:
             raise KeyError(f"неизвестная зона числа {path!r}")
     return out
+
+
+def card_ok(want: str | None, reading: Reading) -> bool:
+    """Верно ли прочитан слот: want — метка карты | 'back' | 'covered' | None."""
+    if want == "back":
+        return reading.state == "back"
+    if want == "covered":
+        return reading.state == "unknown"    # нельзя принять за пусто или карту
+    if want is None:
+        return reading.state == "empty"
+    return reading.state == "face" and reading.label == want
+
+
+def number_ok(want: str | None, reading: NumberReading) -> bool:
+    """Верно ли прочитана зона: want — строка суммы | NO_NUMBER | None (элемента нет)."""
+    if want == NO_NUMBER:
+        return reading.state == "none"
+    if want is None:
+        return reading.state == "empty"
+    return reading.state == "number" and reading.value == float(want)
 
 
 Rect = tuple[int, int, int, int]
@@ -289,8 +324,9 @@ class TableTruthFeed:
         self.sid = uuid.uuid4().hex[:10]
         self.viewport = viewport
         self.raise_prob = raise_prob
-        # screen=True — кадры с ЭКРАНА (боевой путь: mss поверх видимого окна),
-        # а не CDP-скриншот; окно находится на экране при первом кадре
+        # screen=True — кадры с ЭКРАНА (запасной путь: mss поверх видимого
+        # окна), а не пиксели страницы от браузера; окно находится на экране
+        # при первом кадре и должно оставаться видно целиком
         self.screen = screen and not headless
         self._capture: ScreenCapture | None = None
         self.anomalies: Counter = Counter()
@@ -344,9 +380,20 @@ class TableTruthFeed:
         return self.browser.execute(DOM_CARDS_JS)
 
     def frame(self) -> Image.Image:
-        """Сырой кадр: CDP-скриншот viewport'а или (screen=True) та же область экрана."""
+        """Сырой кадр: пиксели viewport'а из браузера или (screen=True) та же область экрана.
+
+        Свернуть окно во время теста (обычно — руками) не должно ронять стенд:
+        окно разворачивается, кадр снимается; случай попадает в аномалии.
+        """
         if not self.screen:
-            return self.browser.screenshot()
+            try:
+                return self.browser.screenshot()
+            except WindowHidden:
+                self.anomalies["hidden"] += 1
+                print("правда: окно браузера было скрыто (свёрнуто) — разворачиваю")
+                self.browser.set_window_state("normal")
+                time.sleep(0.5)
+                return self.browser.screenshot()
         if self._capture is None:
             x, y = self.browser.locate_on_screen()
             vw, vh = self.viewport
@@ -390,15 +437,24 @@ class TableTruthFeed:
         return "call"
 
     def act_and_confirm(self, truth: dict) -> bool:
-        """Действие принято, когда сервер ушёл с этого замороженного состояния."""
         for _ in range(3):
             self.act(truth)
-            end = time.time() + 3.0
-            while time.time() < end:
-                if _key(self.truth()) != _key(truth):
-                    return True
-                time.sleep(0.02)
+            if self.accepted(truth):
+                return True
             self.anomalies["act_lost"] += 1
+        return False
+
+    def accepted(self, truth: dict, timeout: float = 3.0) -> bool:
+        """Сервер ушёл с этого замороженного состояния — действие принято.
+
+        Так подтверждают и DOM-клик стенда, и РЕАЛЬНЫЙ клик актатора
+        (scripts/test_window_states.py).
+        """
+        end = time.time() + timeout
+        while time.time() < end:
+            if _key(self.truth()) != _key(truth):
+                return True
+            time.sleep(0.02)
         return False
 
     def frames(self, seconds: float) -> Iterator[TruthFrame]:

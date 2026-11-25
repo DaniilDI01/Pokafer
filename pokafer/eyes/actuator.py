@@ -15,6 +15,7 @@ class Actuator:
     def __init__(self, browser: TableBrowser, preset: Preset):
         self.browser = browser
         self.preset = preset
+        self.park = self._center("act.park") if "park" in self.preset.node("act") else None
 
     def _center(self, path: str) -> tuple[int, int]:
         vw, vh = self.browser.viewport
@@ -23,7 +24,9 @@ class Actuator:
 
     def click(self, path: str) -> None:
         x, y = self._center(path)
-        self.browser.click_at(x, y)
+        # курсор уходит с кнопки (act.park пресета — пустая точка стола):
+        # под оставленным курсором кнопка подсвечена, и глаза не узнают её число
+        self.browser.click_at(x, y, self.park)
 
     # ---------- готовые действия ----------
 
@@ -53,8 +56,8 @@ class Actuator:
         x, y, w, h = self.preset.zone("act.input", (0, 0, vw, vh))
         cx, cy = x + w // 2, y + h // 2
         # тройной клик = выделить текущее значение в поле
-        self.browser.click_at(cx, cy)
-        self.browser.click_at(cx, cy)
-        self.browser.click_at(cx, cy)
+        self.browser.click_at(cx, cy, self.park)
+        self.browser.click_at(cx, cy, self.park)
+        self.browser.click_at(cx, cy, self.park)
         self.browser.type_text(str(round(amount, 2)))
         self.click("act.raise")

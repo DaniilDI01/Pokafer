@@ -54,6 +54,7 @@ ACT_SELECTORS = {
     "preset_max": ".presets button:nth-child(4)",
     "next": "#nextHandFloat",
 }
+PARK: Rect = (1270, 708, 4, 4)   # пустой край строки статуса: не кнопка, подсветки нет
 SEATS_JS = ("return [...document.querySelectorAll('.seat.villain')].map((s) => "
             "[...s.classList].find((c) => c.startsWith('pos-')).replace('pos-', 'pos_'));")
 # какие позиции занимают боты по их числу — раскладка самой страницы
@@ -302,7 +303,9 @@ def _write_preset(viewport: tuple[int, int], slots: dict, rects: dict, backgroun
         "[act]",
     ]
     lines += [f"{k} = {zone(rects[k])}" for k in ACT_SELECTORS]
-    lines += [f"call_amount = {zone(rects['act.call_amount'])}"]  # число в кнопке «Колл N»
+    lines += [f"call_amount = {zone(rects['act.call_amount'])}",  # число в кнопке «Колл N»
+              f"park = {zone(PARK)}  # куда актатор уводит курсор после клика: под курсором "
+              "кнопка подсвечена и её число не читается"]
     for pos in seat_of:
         lines += ["", f"[seat.{pos}]",
                   "cards = [" + ", ".join(zone(r) for r in slots[f"seat.{pos}.cards"]) + "]",

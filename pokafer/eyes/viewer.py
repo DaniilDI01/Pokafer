@@ -29,7 +29,6 @@ POLL_SEC = 0.08          # частота опроса зеркала (≈ 12 к
 
 def create_viewer_app() -> FastAPI:
     app = FastAPI(title="Pokafer — зеркало глаз", docs_url=None, redoc_url=None)
-    page = PAGE.read_text(encoding="utf-8")
 
     @app.get("/api/health")
     def health() -> dict:
@@ -40,7 +39,9 @@ def create_viewer_app() -> FastAPI:
         return mirror.sessions()
 
     def serve_page() -> HTMLResponse:
-        return HTMLResponse(page, headers={"Cache-Control": "no-store"})
+        # страница читается с диска на каждый запрос: правки зеркала видны после F5,
+        # без перезапуска процесса
+        return HTMLResponse(PAGE.read_text(encoding="utf-8"), headers={"Cache-Control": "no-store"})
 
     @app.get("/")
     def index() -> HTMLResponse:
