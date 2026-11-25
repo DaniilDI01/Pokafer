@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Pokafer — веб-стол</title>
-<link rel="stylesheet" href="/static/style.css?v=18">
+<link rel="stylesheet" href="/static/style.css?v=23">
 </head>
 <body>
 <header>
@@ -24,7 +24,7 @@
 
       <div class="middle">
         <div class="board" id="board"></div>
-        <div class="pot" id="pot"></div>
+        <div class="pot" id="pot"><span class="label">Банк: </span><span class="amt" id="potAmount"></span></div>
         <div class="street" id="street"></div>
         <div class="result-strip hidden" id="resultStrip"></div>
       </div>
@@ -34,7 +34,7 @@
         <div class="avatar">🙂</div>
         <div class="plate">
           <div class="name">Вы <span class="button-mark" id="heroBtn"></span></div>
-          <div class="stack" id="hStack">200</div>
+          <div class="stack" id="hStack"><span class="coin">💰</span><span class="amt" id="hAmount">200</span></div>
         </div>
         <div class="bet-chip" id="hBet"></div>
         <div class="combo" id="combo"></div>
@@ -43,7 +43,7 @@
 
     <div class="actionbar" id="actionbar">
       <button id="foldBtn" class="danger">Фолд</button>
-      <button id="checkCallBtn" class="primary">Чек</button>
+      <button id="checkCallBtn" class="primary"><span class="label">Чек</span><span class="amt" id="callAmount"></span></button>
       <div class="raise-group">
         <button id="raiseBtn" class="success">Рейз</button>
         <input type="range" id="raiseSlider">
@@ -70,6 +70,6 @@
   <span class="scoreline" id="scoreline"></span>
 </div>
 
-<script src="/static/app.js?v=18"></script>
+<script src="/static/app.js?v=23"></script>
 </body>
 </html>

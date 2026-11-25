@@ -6,15 +6,28 @@ window.addEventListener("error", (e) => {
   if (s) { s.textContent = "JS-ошибка: " + e.message; s.classList.add("bad"); }
 });
 
-const SUITS = { s: "♠", h: "♥", d: "♦", c: "♣" };
-const RED = new Set(["h", "d"]);
 const BOT_AVATARS = ["🤖", "👾", "🐱", "🦊", "🧠"];
+
+/* Сессия именуется клиентом: обрыв связи или F5 возвращает сервер к тому же
+   столу (а не к новому с одним ботом и стартовыми стеками). */
+const SID_KEY = "pokafer.sid";
+function sessionId() {
+  const fromUrl = new URLSearchParams(location.search).get("sid");
+  if (fromUrl) return fromUrl;
+  try {
+    return sessionStorage.getItem(SID_KEY)
+      || (sessionStorage.setItem(SID_KEY, crypto.randomUUID()), sessionStorage.getItem(SID_KEY));
+  } catch { return crypto.randomUUID(); }
+}
+const sid = sessionId();
 
 const $ = (id) => document.getElementById(id);
 const els = {
   status: $("status"), log: $("log"),
+  table: document.querySelector(".table"), middle: document.querySelector(".middle"),
   board: $("board"), pot: $("pot"), street: $("street"),
-  hStack: $("hStack"), hBet: $("hBet"), scoreline: $("scoreline"), hCards: $("hCards"),
+  hAmount: $("hAmount"), callAmount: $("callAmount"), potAmount: $("potAmount"),
+  callLabel: $("checkCallBtn").querySelector(".label"), hBet: $("hBet"), scoreline: $("scoreline"), hCards: $("hCards"),
   seatHero: $("seatHero"), combo: $("combo"), heroBtn: $("heroBtn"),
   villains: $("villains"),
   actionbar: $("actionbar"),
@@ -36,15 +49,31 @@ let prevStreet = null;
 
 /* ---------- отрисовка ---------- */
 
+/* Суммы на столе — точно, как в румах: целая — без дробной части, иначе до
+   двух знаков. Глаза читают то, что видно: округление теряло бы четверти
+   блайнда в стеках, банке и ставках. */
+function fmt(x) {
+  return String(Math.round(x * 100) / 100);
+}
+
+/* Карта — спрайт из листа 13x4 «ранг x масть» (pokafer/web/static/cards):
+   лица карт не рисуются шрифтом, рендер одинаков в headless и на экране. */
+const RANKS = "23456789TJQKA";
+const SUIT_ORDER = "shdc";
+
 function cardEl(cardStr, small = false) {
   const div = document.createElement("div");
   if (!cardStr) {
-    div.className = "card back" + (small ? " small" : "");
+    div.className = "card back";
     return div;
   }
-  const suit = SUITS[cardStr[1]] || cardStr[1];
-  div.className = "card" + (small ? " small" : "") + (RED.has(cardStr[1]) ? " red" : "");
-  div.innerHTML = `<span class="r">${cardStr[0]}</span><span class="s">${suit}</span>`;
+  const col = RANKS.indexOf(cardStr[0]);
+  const row = SUIT_ORDER.indexOf(cardStr[1]);
+  if (col < 0 || row < 0) throw new Error(`неизвестная карта ${cardStr}`);
+  const [w, h] = small ? [46, 66] : [58, 82];
+  div.className = "card" + (small ? " small" : "");
+  div.dataset.card = cardStr;
+  div.style.backgroundPosition = `${-col * w}px ${-row * h}px`;
   return div;
 }
 
@@ -57,11 +86,35 @@ function renderCards(container, cards, faceDownCount, small = false) {
   (cards || []).forEach((c) => container.appendChild(cardEl(c, small)));
 }
 
+/* Борд — пять ПОСТОЯННЫХ слотов: карты не перецентрируются с каждой улицей
+   (полу­пиксельные сдвиги ломают попиксельное распознавание глаз). */
+const BOARD_SLOTS = 5;
+
+function renderBoard(cards) {
+  els.board.innerHTML = "";
+  for (let i = 0; i < BOARD_SLOTS; i++) {
+    const slot = document.createElement("div");
+    slot.className = "slot";
+    if (cards && cards[i]) slot.appendChild(cardEl(cards[i], true));
+    els.board.appendChild(slot);
+  }
+}
+
+/* Целые позиции: CSS-центрирование даёт полу­пиксели (чётность ширины
+   меняется вместе со скроллбаром/окном), а глаза сравнивают пиксель-в-пиксель.
+   Середина стола ставится скриптом в целое число px, все «центрированные»
+   блоки отсчитываются от неё. */
+function snapLayout() {
+  els.table.style.setProperty("--cx", `${Math.round(els.middle.clientWidth / 2)}px`);
+}
+window.addEventListener("resize", snapLayout);
+
 function addLog(text, cls = "sys", dist = null) {
   const div = document.createElement("div");
   div.className = "entry " + cls;
   div.innerHTML = text + (dist ? ` <span class="dist">[${dist}]</span>` : "");
-  els.log.prepend(div);
+  els.log.appendChild(div);           // записи сверху вниз, по ходу раздачи
+  els.log.scrollTop = els.log.scrollHeight;
 }
 
 function fmtDist(dist, top = 3) {
@@ -96,30 +149,26 @@ function renderVillains(v) {
     if (b.folded) seat.classList.add("folded");
     const reveal = Array.isArray(b.cards);
     const action = botActions[b.name] || (b.folded ? "фолд" : "");
+    // строка действия резервируется всегда: табличка не меняет высоту
     seat.innerHTML = `
-      <div class="avatar">${BOT_AVATARS[(i + 1) % BOT_AVATARS.length]}</div>
-      <div class="plate">
-        <div class="name">${b.name}${b.is_button ? ' <span class="button-mark">D</span>' : ""}</div>
-        <div class="stack">${Math.round(b.stack)}</div>
-        ${b.strategy ? `<div class="strat">${b.strategy}</div>` : ""}
-        ${action ? `<div class="last-action">${action}</div>` : ""}
+      <div class="head">
+        <div class="avatar">${BOT_AVATARS[(i + 1) % BOT_AVATARS.length]}</div>
+        <div class="plate">
+          <div class="name">${b.name}${b.is_button ? ' <span class="button-mark">D</span>' : ""}</div>
+          <div class="stack"><span class="coin">💰</span><span class="amt">${fmt(b.stack)}</span></div>
+          ${b.strategy ? `<div class="strat">${b.strategy}</div>` : ""}
+          <div class="last-action"${action ? "" : " hidden"}>${action}</div>
+        </div>
       </div>
+      <div class="cards"></div>
+      <div class="bet-chip"></div>
     `;
-    const cards = document.createElement("div");
-    cards.className = "cards";
-    if (b.folded && !reveal) {
-      // сбросил — карты не показываем
-    } else if (reveal) {
-      renderCards(cards, b.cards, 0);
-    } else {
-      renderCards(cards, null, 2);
-    }
-    seat.appendChild(cards);
-    // фишка ставки после карт: карты бота стоят на фиксированном месте
-    const chip = document.createElement("div");
-    chip.className = "bet-chip";
-    chip.textContent = b.bet > 0 ? Math.round(b.bet) : "";
-    seat.appendChild(chip);
+    // бокс карт фиксирован (рассчитан на вскрытые карты): рубашки и открытые
+    // карты стоят на одних местах при любом состоянии места
+    const cards = seat.querySelector(".cards");
+    if (reveal) renderCards(cards, b.cards, 0);
+    else if (!b.folded) renderCards(cards, null, 2);  // сбросил — карты не показываем
+    seat.querySelector(".bet-chip").textContent = b.bet > 0 ? fmt(b.bet) : "";
     els.villains.appendChild(seat);
   });
 }
@@ -141,10 +190,14 @@ function setActions(view) {
   );
   if (myTurn) {
     if (legal.call !== null && legal.call !== undefined) {
-      els.checkCallBtn.textContent = `Колл ${legal.call}`;
+      callAmountText = fmt(legal.call);   // «Колл» и сумма — отдельные поля:
+      els.callAmount.textContent = callAmountText;  // число начинается в фиксированной точке
+      els.callLabel.textContent = "Колл";
       els.checkCallBtn.dataset.act = "call";
     } else {
-      els.checkCallBtn.textContent = "Чек";
+      callAmountText = "";
+      els.callAmount.textContent = "";
+      els.callLabel.textContent = "Чек";
       els.checkCallBtn.dataset.act = "check";
     }
   }
@@ -171,7 +224,27 @@ function heroComboText(v) {
   return pair ? `у вас: ${pair[1] >= 3 ? "тройка/каре" : "пара"} ${pair[0]}` : "";
 }
 
+let pending = false;  // действие отправлено — кнопки закрыты до ответного вида
+let callAmountText = "";  // сумма в кнопке «Колл N»; пусто — «Чек»
+
+function lockActions() {
+  [els.nextFloat, els.foldBtn, els.checkCallBtn, els.raiseBtn,
+   els.raiseSlider, els.raiseInput].forEach((el) => { el.disabled = true; });
+  document.querySelectorAll(".presets button").forEach((b) => { b.disabled = true; });
+}
+
+function sendAction(obj) {
+  // сервер отвечает видом СРАЗУ после действия героя (не после «раздумий»
+  // ботов), но двойной клик и клик по устаревшему виду не должны уходить
+  // вторым действием
+  if (pending || !send(obj)) return false;
+  pending = true;
+  lockActions();
+  return true;
+}
+
 function renderView(v) {
+  pending = false;  // любой вид — ответ сервера: кнопки снова в его ведении
   // новая рука или новая улица — сбрасываем подписи действий ботов
   if (v.hand_no !== prevHandNo) {
     botActions = {};
@@ -184,14 +257,14 @@ function renderView(v) {
   lastView = v;
   renderCards(els.hCards, v.hero.cards, 0);
   renderVillains(v);
-  renderCards(els.board, v.board, 0, true);
-  els.pot.textContent = Math.round(v.pot);
+  renderBoard(v.board);
+  els.potAmount.textContent = fmt(v.pot);
   els.street.textContent = `${v.street} · рука #${v.hand_no}`;
   els.scoreline.textContent = v.stackline;
-  els.hStack.textContent = Math.round(v.hero.stack);
+  els.hAmount.textContent = fmt(v.hero.stack);
   els.heroBtn.textContent = v.hero.is_button ? "D" : "";
   els.hBet.style.display = v.hero.bet > 0 ? "" : "none";
-  els.hBet.textContent = v.hero.bet > 0 ? Math.round(v.hero.bet) : "";
+  els.hBet.textContent = v.hero.bet > 0 ? fmt(v.hero.bet) : "";
   els.seatHero.classList.toggle("active", v.to_act === 1 && !v.hand_over);
   els.seatHero.classList.toggle("folded", !!v.hero.folded);
   els.combo.textContent = heroComboText(v);
@@ -207,16 +280,17 @@ function showResult(r) {
   const main = r.kind === "showdown"
     ? `🏆 ${win} +${r.amount} (шоудаун)`
     : `🏆 ${win} забирает ${r.pot} (фолд)`;
-  const parts = [];
+  els.resultStrip.innerHTML = `<div class="main">${main}</div>`;
+  els.resultStrip.classList.remove("hidden");
+  addLog(`рука завершена: ${main}`, "sys");
+  // разбор вскрытия (карты и комбинации всех участников) — в журнале: на
+  // столе только итог, полоса итога не растёт и не зависит от числа игроков
   for (const [name, score] of Object.entries(r.scores || {})) {
     const cards = (r.hole_cards || {})[name];
     const w = (r.winnings || {})[name];
-    parts.push(`${name}${cards ? ` [${cards.join(" ")}]` : ""}: ${score}${w ? ` → +${Math.round(w)}` : ""}`);
+    addLog(`${name}${cards ? ` [${cards.join(" ")}]` : ""}: ${score}` +
+      (w ? ` → +${Math.round(w * 100) / 100}` : ""), "sys");
   }
-  els.resultStrip.innerHTML = `<div class="main">${main}</div>` +
-    (parts.length ? `<div class="detail">${parts.join(" · ")}</div>` : "");
-  els.resultStrip.classList.remove("hidden");
-  addLog(`рука завершена: ${main}`, "sys");
 }
 
 /* ---------- сеть ---------- */
@@ -234,7 +308,7 @@ function send(obj) {
 
 function connect() {
   const proto = location.protocol === "https:" ? "wss" : "ws";
-  ws = new WebSocket(`${proto}://${location.host}/ws/table`);
+  ws = new WebSocket(`${proto}://${location.host}/ws/table?sid=${encodeURIComponent(sid)}`);
   ws.onopen = () => { els.status.textContent = "подключено"; els.status.classList.remove("bad"); };
   ws.onerror = () => {
     els.status.textContent = "ошибка WebSocket (см. консоль)";
@@ -261,11 +335,13 @@ function connect() {
 
 /* ---------- действия героя ---------- */
 
-els.foldBtn.onclick = () => { send({ type: "action", action: "fold" }); addLog("Вы: фолд", "hero"); };
+els.foldBtn.onclick = () => {
+  if (sendAction({ type: "action", action: "fold" })) addLog("Вы: фолд", "hero");
+};
 els.checkCallBtn.onclick = () => {
   const act = els.checkCallBtn.dataset.act;
-  send({ type: "action", action: act });
-  addLog(act === "call" ? `Вы: ${els.checkCallBtn.textContent.toLowerCase()}` : "Вы: чек", "hero");
+  if (sendAction({ type: "action", action: act }))
+    addLog(act === "call" ? `Вы: колл ${callAmountText}` : "Вы: чек", "hero");
 };
 
 function currentRaise() {
@@ -280,8 +356,8 @@ els.raiseBtn.onclick = () => {
   if (amt === null || !lastView) return;
   const facing = lastView.legal && lastView.legal.call !== null && lastView.legal.call !== undefined;
   const verb = facing ? "raise" : "bet";
-  send({ type: "action", action: verb, amount: amt });
-  addLog(`Вы: ${facing ? "рейз до" : "ставка"} ${amt}`, "hero");
+  if (sendAction({ type: "action", action: verb, amount: amt }))
+    addLog(`Вы: ${facing ? "рейз до" : "ставка"} ${amt}`, "hero");
 };
 
 els.raiseSlider.oninput = () => { els.raiseInput.value = els.raiseSlider.value; };
@@ -305,8 +381,7 @@ document.querySelectorAll(".presets button").forEach((b) => {
 els.hintBtn.onclick = () => send({ type: "hint" });
 els.nextFloat.onclick = () => {
   if (!lastView || !lastView.hand_over) return;
-  send({ type: "new_hand" });
-  addLog("— новая рука —", "sys");
+  if (sendAction({ type: "new_hand" })) addLog("— новая рука —", "sys");
 };
 
 /* ---------- настройка ботов ---------- */
@@ -347,6 +422,7 @@ els.addBotBtn.onclick = () => {
 };
 
 /* старт */
+snapLayout();
 fetch("/v1/strategies")
   .then((r) => r.json())
   .then((list) => {

@@ -15,13 +15,17 @@
   hint      — попросить подсказку
   strategy  {name} — сменить стратегию единственного бота (совместимость)
   configure {bots: [...]} — пересобрать стол: список ботов и их стратегии
+
+Сессии именуются клиентом (?sid=...): переподключение/F5 возвращаются к тому
+же столу, а автотесты глаз читают правду СВОЕЙ сессии (GET /debug/state?sid=).
 """
 from __future__ import annotations
 
 import asyncio
+import uuid
 from pathlib import Path
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -35,6 +39,7 @@ HERO = 1
 HERO_NAME = "Вы"
 START_STACK = 200.0
 MAX_BOTS = 5
+MAX_SESSIONS = 64  # отложенные сессии ждут переподключения; старейшие вытесняются
 STREET_RU = {
     "preflop": "префлоп", "flop": "флоп", "turn": "терн",
     "river": "ривер", "showdown": "шоудаун",
@@ -70,6 +75,10 @@ class TableSession:
             {"name": "Мозг", "strategy": strategy}
         ])
         self._reveal: dict[int, list[str]] = {}  # карты шоудауна — не прячем до след. руки
+        self._settled = 0                        # номер руки, итог которой зафиксирован
+        self.last_result: dict | None = None     # для ресинка переподключившейся страницы
+        # шаги ботов — строго по одному, даже если к сессии подключены две вкладки
+        self.step_lock = asyncio.Lock()
         self._start_hand()
 
     # ---------- конфигурация ----------
@@ -146,13 +155,16 @@ class TableSession:
                     if legal["raise"] is None:
                         legal["raise"] = {"min": la.amount_to}
                     legal["raise"]["max"] = la.amount_to
+        # после руки банк на столе не «обнуляется»: показываем разыгранный
+        # (движок обнуляет вложения — иначе stack+invested считал бы банк дважды)
+        pot = snap.pot if not e.hand_over else float((e.result or {}).get("pot", snap.pot))
         return {
             "type": "view",
             "hand_no": self.hand_no,
             "button_seat": self.button,
             "street": STREET_RU[snap.street],
             "board": snap.board,
-            "pot": snap.pot,
+            "pot": pot,
             "hero": {
                 "seat": HERO, "name": HERO_NAME, "stack": me.stack,
                 "bet": me.bet_street, "invested": me.invested,
@@ -208,15 +220,22 @@ class TableSession:
             "reasoning": d.reasoning,
         }
 
-    def finish_hand(self) -> dict | None:
+    def settle_hand(self) -> dict | None:
+        """Рука окончена: стеки и вскрытые карты фиксируются ОДИН раз за руку.
+
+        Возвращает итог (для клиента) в момент фиксации, потом None. Звать
+        сразу после хода, завершившего руку, и ДО отправки вида: правда
+        (/debug/state) никогда не показывает «рука окончена» без итога.
+        """
         e = self.engine
-        if not e.hand_over:
+        if not e.hand_over or self._settled == self.hand_no:
             return None
+        self._settled = self.hand_no
         res = e.result or {}
         self.stacks = {s: e.seats[s].stack for s in self.names}
         self._reveal = {s: c for s, c in res.get("hole_cards", {}).items()}
         name_of = self.names
-        return {
+        self.last_result = {
             "type": "result",
             "kind": res.get("type"),
             "winners": [name_of[w] for w in res.get("winners", [])],
@@ -230,6 +249,7 @@ class TableSession:
             "scores": {name_of[s]: n for s, n in res.get("scores_ru", res.get("scores", {})).items()},
             "hole_cards": {name_of[s]: c for s, c in res.get("hole_cards", {}).items()},
         }
+        return self.last_result
 
 
 def create_table_app(default_strategy: str = "heuristic",
@@ -253,39 +273,62 @@ def create_table_app(default_strategy: str = "heuristic",
     def list_strategies():
         return strategies_available()
 
+    sessions: dict[str, TableSession] = {}
+
+    def _session_for(sid: str | None, strategy: str,
+                     seed: int | None) -> tuple[TableSession, str]:
+        """Сессия по sid (переподключение к тому же столу) либо новая."""
+        if sid and sid in sessions:
+            return sessions[sid], sid
+        session = TableSession(strategy=strategy, seed=seed)
+        sid = sid or uuid.uuid4().hex[:12]
+        sessions[sid] = session
+        while len(sessions) > MAX_SESSIONS:
+            sessions.pop(next(iter(sessions)))
+        return session, sid
+
     @app.get("/debug/state")
-    def debug_state():
-        """Ground truth последней активной сессии, построенный ЖИВЬЁМ.
+    async def debug_state(sid: str):
+        """Ground truth ОДНОЙ сессии (вид героя), строится живьём.
 
-        Глаза НЕ используют этот endpoint в рантайме — он для проверки
-        точности распознавания против известного состояния.
+        Глаза НЕ используют этот endpoint в рантайме — только калибровка и
+        автотесты сверяют распознанное с известным состоянием. Сид обязателен:
+        «последняя сессия» означала бы чужую, стоит открыть вторую вкладку.
         """
-        return latest_session.view() if latest_session else {}
-
-    latest_session: TableSession | None = None
+        session = sessions.get(sid)
+        if session is None:
+            raise HTTPException(404, f"сессия {sid!r} не найдена")
+        return session.view()
 
     @app.websocket("/ws/table")
-    async def table(ws: WebSocket, strategy: str = default_strategy, seed: int | None = None):
+    async def table(ws: WebSocket, strategy: str = default_strategy,
+                    seed: int | None = None, sid: str | None = None):
         await ws.accept()
-        session = TableSession(strategy=strategy, seed=seed)
+        session, _ = _session_for(sid, strategy, seed)
+
+        async def sync() -> None:
+            """Вид стола; если рука только что окончена — её итог вслед за видом."""
+            result = session.settle_hand()
+            await ws.send_json(session.view())
+            if result is not None:
+                await ws.send_json(result)
 
         async def advance_bot() -> None:
             """Доигрывает ходы ботов; итог — клиент сам попросит новую руку."""
-            while not session.engine.hand_over and session.engine.actor_seat != HERO:
-                await asyncio.sleep(bot_think_sec)
-                event = session.bot_step()
-                if event is None:
-                    break
-                await ws.send_json(event)
-                await ws.send_json(session.view())
-            if session.engine.hand_over:
-                await ws.send_json(session.finish_hand())
-                await ws.send_json(session.view())
+            async with session.step_lock:
+                while not session.engine.hand_over and session.engine.actor_seat != HERO:
+                    await asyncio.sleep(bot_think_sec)
+                    event = session.bot_step()
+                    if event is None:
+                        break
+                    await ws.send_json(event)
+                    await ws.send_json(session.view())
+                await sync()  # руку закончил бот: уйдёт вид и (первый раз) итог
 
-        nonlocal latest_session
         try:
-            latest_session = session
             await ws.send_json(session.view())
+            if session.engine.hand_over and session.last_result:
+                await ws.send_json(session.last_result)  # ресинк после F5/обрыва
             await advance_bot()
             while True:
                 msg = await ws.receive_json()
@@ -295,11 +338,9 @@ def create_table_app(default_strategy: str = "heuristic",
                         session.engine.apply(msg["action"], msg.get("amount"))
                     except (ValueError, KeyError, RuntimeError) as e:
                         await ws.send_json({"type": "error", "detail": str(e)})
-                        # ресинк: клиент мог разойтись с сервером (устаревший
-                        # минимум рейза и т.п.) — присылаем актуальный вид
-                        await ws.send_json(session.view())
-                        continue
-                        await ws.send_json(session.view())
+                    # вид шлём сразу, легальным ли было действие: клиент не
+                    # ждёт «раздумий» ботов с активными кнопками
+                    await sync()
                     await advance_bot()
                 elif mtype == "new_hand":
                     if session.engine.hand_over:

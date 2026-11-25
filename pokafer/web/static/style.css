@@ -14,14 +14,19 @@
   --card-h: 82px;
 }
 * { box-sizing: border-box; margin: 0; padding: 0; }
+/* Страница не прокручивается: журнал скроллится внутри своей панели.
+   Скроллбар сжимал бы раскладку (полупиксельные позиции). Ниже ~680px высоты
+   страница начинает скроллиться — это запасной режим, не рабочий. */
 body {
   background: var(--bg); color: var(--text);
   font-family: "Segoe UI", system-ui, sans-serif;
-  min-height: 100vh; display: flex; flex-direction: column;
+  height: 100vh; display: flex; flex-direction: column;
 }
+/* высота шапки фиксирована: верх стола не зависит от шрифтов системы */
 header {
+  height: 62px; flex: none;
   display: flex; justify-content: space-between; align-items: center; gap: 12px;
-  padding: 10px 18px; border-bottom: 1px solid var(--line); flex-wrap: wrap;
+  padding: 0 18px; border-bottom: 1px solid var(--line);
 }
 .brand { font-size: 20px; font-weight: 700; letter-spacing: .5px; white-space: nowrap; }
 .brand span { color: var(--dim); font-weight: 400; font-size: 14px; margin-left: 8px; }
@@ -48,125 +53,179 @@ header {
 .chip-x:hover { color: var(--red); }
 button.ghost { background: transparent; border: 1px solid var(--line); color: var(--dim); }
 button.ghost.small { font-size: 12px; padding: 4px 10px; }
+header button.ghost { padding: 8px 14px; }
 button.ghost:hover { border-color: var(--accent); color: var(--text); }
 
-main { display: flex; gap: 16px; padding: 16px; flex: 1; }
-.table-wrap { flex: 1; display: flex; flex-direction: column; gap: 14px; }
+/* сетка: высота строки — по колонке стола, журнал подстраивается под неё
+   (contain: size убирает вклад содержимого журнала) и не растягивает страницу */
+main {
+  display: grid; grid-template-columns: minmax(0, 940px) 280px;
+  justify-content: start; align-content: start; align-items: stretch;
+  gap: 16px; padding: 16px; flex: 1; min-height: 625px;
+}
+.table-wrap { min-width: 0; display: flex; flex-direction: column; gap: 14px; }
+
+/* ---------- стол ---------- */
 
 .table {
   background: radial-gradient(ellipse at center, var(--felt1) 0%, var(--felt2) 70%);
   border: 10px solid #232a38; border-radius: 46% / 38%;
   box-shadow: inset 0 0 60px rgba(0,0,0,.45), 0 10px 30px rgba(0,0,0,.5);
-  /* пропорции стола фиксированы на любом окне, стол центрируется */
-  min-height: 520px; width: min(940px, 100%); margin: 0 auto; position: relative;
+  /* высота фиксирована: раскладка мест рассчитана на неё (ширина — до 940) */
+  height: 510px; width: min(940px, 100%); margin: 0 auto; position: relative;
   padding: 18px 70px;
-  /* герой прижат к низу, борд центрируется в остатке (margin: auto 0 у .middle) */
+  /* места, центр и герой прижаты к низу и образуют жёсткий блок */
   display: flex; flex-direction: column; justify-content: flex-end; gap: 16px;
+  /* целая середина содержимого (px) — ставит snapLayout() в app.js */
+  --cx: 376px;
 }
 
-/* места ботов: абсолютные позиции вокруг стола, компакто (в один ряд).
-   Зоны разнесены так, чтобы при 1..5 ботах ничего не перекрывалось:
-   верхние углы выше боковых, строка улицы ограничена центральной зоной. */
+/* Места ботов — боксы ФИКСИРОВАННОГО размера: шапка (аватар + табличка
+   постоянной ширины), под ней бокс карт, слот фишки ставки. Ничего внутри
+   места не сдвигается от содержимого (длина имени, подпись действия, вскрытие
+   карт) — глаза читают место по постоянным зонам. Якоря — от низа стола. */
 .villains { position: absolute; inset: 0; pointer-events: none; }
 .seat.villain {
-  position: absolute; display: flex; flex-direction: row; align-items: center; gap: 8px;
+  position: absolute; width: 152px; height: 154px;
   pointer-events: auto; transition: opacity .25s;
 }
-.seat.villain.folded { opacity: .38; }
-.pos-top  { top: 2px;    left: 50%; transform: translateX(-50%); }
-.pos-tl   { top: 58px;  left: 4%; }
-.pos-tr   { top: 58px;  right: 4%; }
-.pos-left { top: 47%;   left: 6px;  transform: translateY(-50%); }
-.pos-right{ top: 47%;   right: 6px; transform: translateY(-50%); }
+/* Сбросивший игрок: приглушается только аватар. Текст таблички остаётся
+   полно­контрастным — глаза читают стеки и фолднувших (общее приглушение до
+   55% опускало контраст текста ниже порога распознавания). */
+.seat.villain.folded .avatar { opacity: .4; filter: grayscale(1); }
+.pos-top   { left: var(--cx); margin-left: -76px; bottom: 334px; }
+.pos-tl    { left: 24px;  bottom: 278px; }
+.pos-tr    { right: 24px; bottom: 278px; }
+.pos-left  { left: 8px;   bottom: 108px; }
+.pos-right { right: 8px;  bottom: 108px; }
+.seat.villain .head {
+  position: absolute; left: 0; top: 0; height: 72px;
+  display: flex; align-items: center; gap: 8px;
+}
+/* бокс карт рассчитан на вскрытые карты (58x82): рубашки и открытые карты
+   стоят на одних местах при любом состоянии места */
+.seat.villain .cards {
+  position: absolute; left: 16px; top: 72px; width: 121px; height: 82px;
+  display: flex; align-items: center; gap: 5px;
+}
+/* фишка ставки — слот постоянного места: у левых мест правее шапки,
+   у правых — левее (не между местом и картами соседей) */
+.seat.villain .bet-chip { position: absolute; top: 27px; }
+.pos-left .bet-chip, .pos-tl .bet-chip { left: 160px; }
+.pos-right .bet-chip, .pos-tr .bet-chip, .pos-top .bet-chip { right: 160px; }
+/* верхнее место: карты ПРАВЕЕ шапки (под шапкой они встали бы колонной
+   над бордом и читались как его продолжение), фишка — левее */
+.seat.villain.pos-top .cards { left: 152px; top: 0; }
 
-.seat.villain .avatar { width: 40px; height: 40px; font-size: 20px; }
+.seat.villain .avatar { width: 40px; height: 40px; font-size: 20px; flex: none; }
 .avatar {
   width: 46px; height: 46px; border-radius: 50%;
   background: var(--panel); border: 2px solid var(--line);
   display: flex; align-items: center; justify-content: center; font-size: 23px;
 }
 .seat.active .avatar { border-color: var(--accent); box-shadow: 0 0 14px rgba(240,180,41,.55); }
-.plate { background: rgba(0,0,0,.4); border-radius: 9px; padding: 4px 10px; text-align: center; min-width: 84px; }
+
+/* таблички места и героя — постоянной ширины: цифры и подписи действий
+   не меняют раскладку */
+.seat.villain .plate { width: 104px; height: 72px; flex: none; }
+.seat.hero .plate { width: 97px; flex: none; }
+.plate { background: rgba(0,0,0,.4); border-radius: 9px; padding: 4px 10px; text-align: left; }
+/* стек: монета и число — отдельные поля; число начинается в фиксированной
+   точке и растёт вправо (глаза читают зону, где только число) */
+.plate .stack { display: flex; align-items: baseline; gap: 4px; white-space: nowrap; }
+.plate .stack .coin { font-size: 11px; flex: none; }
 .plate .name { font-size: 12px; color: var(--dim); white-space: nowrap; }
 .plate .stack { font-size: 15px; font-weight: 700; }
-.plate .stack::before { content: "💰 "; font-size: 11px; }
 .plate .strat { font-size: 10px; color: var(--accent); text-transform: uppercase; letter-spacing: .5px; }
 .plate .last-action {
   font-size: 12px; color: var(--text); background: rgba(0,0,0,.45);
   border-radius: 6px; margin-top: 3px; padding: 2px 6px; white-space: nowrap;
 }
+.plate .last-action[hidden] { visibility: hidden; }  /* строка резервируется */
 .button-mark { color: var(--accent); font-weight: 800; }
 
-.seat.hero { display: flex; align-items: center; justify-content: center; gap: 12px; position: relative; }
-.combo { position: absolute; right: 0; top: 50%; transform: translateY(-50%); color: var(--dim); font-size: 12px; }
-
+/* герой: блок постоянной ширины (288 = карты 121 + 12 + аватар 46 + 12 +
+   табличка 97), левый край в целых px от середины стола */
+.seat.hero {
+  position: relative; left: calc(var(--cx) - 144px); width: 288px; height: 82px; flex: none;
+  display: flex; align-items: center; gap: 12px;
+}
+.seat.hero .cards { display: flex; gap: 5px; flex: none; }
+.combo { position: absolute; left: calc(100% + 16px); top: 33px; color: var(--dim); font-size: 12px; white-space: nowrap; }
 .cards { display: flex; gap: 5px; min-height: 40px; }
-.seat.villain .cards { min-height: 40px; }
-.card {
-  width: var(--card-w); height: var(--card-h); border-radius: 7px;
-  background: #fdfdf8; color: #1b1f27;
-  display: flex; flex-direction: column; justify-content: space-between;
-  padding: 5px 7px; font-weight: 800; font-size: 22px; line-height: 1;
-  box-shadow: 0 3px 8px rgba(0,0,0,.4);
-}
-.card .r { font-size: 24px; }
-.card .s { font-size: 20px; align-self: flex-end; }
-.card.red { color: #c43c3c; }
-.card.back {
-  width: 34px; height: 48px;
-  background: repeating-linear-gradient(45deg, #33507e, #33507e 5px, #2a4266 5px, #2a4266 10px);
-}
-.card.small { --card-w: 46px; --card-h: 66px; font-size: 18px; }
-.card.small .r { font-size: 20px; }
-.card.small .s { font-size: 16px; }
+.seat.hero.folded .cards { opacity: .55; }
 
-.middle {
-  margin: 0 auto; position: relative;
-  text-align: center; height: 258px;
-  /* дети абсоютно закреплены: банк/улица/борд/итог не плавают ни при какой
-     улице и содержимом (глаза читают зоны в % — они обязаны не плавать) */
+/* Лица карт — растровые спрайты (scripts/gen_card_sprites.py), лист 13x4
+   «ранг x масть», смещение фона в целых px. Спрайт печатается пиксель-в-
+   пиксель в любом режиме браузера и на любой машине — шрифтовому рендеру
+   текста это недоступно (headless и видимое окно дают разные глифы), а
+   глаза сравнивают карты попиксельно. Ни теней, ни обводки наружу: кроп
+   слота зависит только от самой карты. */
+.card {
+  width: var(--card-w); height: var(--card-h); flex: none;
+  background: url("/static/cards/58x82.png") no-repeat;
 }
-.board { position: absolute; top: 0; left: 50%; transform: translateX(-50%);
-  min-height: 66px; display: flex; gap: 7px; }
-.pot { position: absolute; top: 96px; left: 50%; transform: translateX(-50%);
+.card.small { --card-w: 46px; --card-h: 66px; background-image: url("/static/cards/46x66.png"); }
+.card.back { width: 34px; height: 48px; background-image: url("/static/cards/back.png"); }
+
+/* Центр стола: дети закреплены на целых пикселях от --cx (без transform:
+   дробный сдвиг слоя меняет антиалиасинг глифов). Ширина блоков и отступы
+   фиксированы — банк, улица и итог не плавают ни при каком содержимом. */
+.middle {
+  margin: 0 auto; position: relative; width: 100%; flex: none;
+  text-align: left; height: 204px;
+}
+.board { position: absolute; top: 0; left: calc(var(--cx) - 129px);
+  width: 258px; height: 66px; display: flex; gap: 7px; }
+.board .slot { width: 46px; height: 66px; flex: none; }
+.pot { position: absolute; top: 90px; left: calc(var(--cx) - 120px); width: 240px;
   white-space: nowrap; font-size: 18px; font-weight: 700; color: var(--accent); }
-.pot::before { content: "Банк: "; color: var(--dim); font-weight: 400; }
-.street { position: absolute; top: 132px; left: 50%; transform: translateX(-50%);
+/* подпись банка — фиксированной ширины: число начинается в одной точке при
+   любом рендере текста (headless и видимое окно дают подпись разной ширины) */
+.pot .label { display: inline-block; width: 60px; color: var(--dim); font-weight: 400; }
+.pot .amt { white-space: nowrap; }
+.street { position: absolute; top: 122px; left: calc(var(--cx) - 120px); width: 240px;
   white-space: nowrap; font-size: 12px; text-transform: uppercase; letter-spacing: 1px;
   color: var(--dim);
-  /* узкая центральная зона: не заезжает под боковые места (left/right) */
-  max-width: 60%;
 }
-
-.result-strip { position: absolute; top: 160px; left: 50%; transform: translateX(-50%);
+.result-strip { position: absolute; top: 148px; left: calc(var(--cx) - 150px); width: 300px;
   background: rgba(0,0,0,.5); border: 1px solid var(--accent);
   border-radius: 10px; padding: 8px 16px;
-  /* фиксированная высота: длинный список вскрытий скроллится внутри */
-  max-width: 58%; height: 88px; overflow-y: auto;
+  height: 56px; overflow-y: auto;  /* длинный итог скроллится внутри */
 }
 .result-strip.hidden { visibility: hidden; }  /* место резервируется: зоны не плывут */
 .result-strip .main { font-size: 15px; font-weight: 800; color: var(--accent); }
-.result-strip .detail { font-size: 12px; color: var(--dim); margin-top: 3px; }
 
+/* фиксированная ширина и левый край цифр в целом px: позиция слота не
+   зависит от разрядности суммы (глаза читают цифры попиксельно) */
 .bet-chip {
-  background: var(--accent); color: #22222a;
-  font-weight: 800; font-size: 12px; border-radius: 999px; padding: 2px 9px;
-  box-shadow: 0 2px 6px rgba(0,0,0,.4);
+  width: 64px; background: var(--accent); color: #22222a;
+  font-weight: 800; font-size: 12px; border-radius: 999px; padding: 2px 0 2px 10px;
+  white-space: nowrap; box-shadow: 0 2px 6px rgba(0,0,0,.4);
 }
 .seat .bet-chip:empty { display: none !important; }
-#hBet { position: absolute; top: -26px; left: 50%; transform: translateX(-50%); }
+/* слева от карт героя; зазор 16px больше размытия тени фишки: тень не
+   ложится на край карты героя */
+#hBet { position: absolute; top: 32px; right: calc(100% + 16px); }
 
+/* ---------- панель действий ---------- */
+
+/* Органы управления — на постоянных местах: flex-сжатие запрещено (оно
+   ужимало кнопки по-разному в зависимости от надписи и сдвигало всё ряд), а
+   содержимое подобрано так, чтобы влезать без сжатия; в узком окне панель
+   скроллится, а не ломает раскладку. */
 .actionbar {
-  display: flex; gap: 12px; justify-content: center; align-items: stretch;
+  display: flex; gap: 8px; justify-content: center; align-items: stretch;
   background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 12px;
   /* не растягивается на широких окнах: ширина стола */
-  width: 100%; max-width: 940px; margin: 0 auto;
+  width: 100%; max-width: 940px; margin: 0 auto; overflow-x: auto;
 }
-.seat.folded .cards, .seat.folded .plate { opacity: .38; }
+.actionbar > * { flex: none; }
 .actionbar.hidden { display: none; }
 button {
   border: none; border-radius: 9px; padding: 10px 18px; font-size: 15px; font-weight: 700;
   cursor: pointer; color: #fff; transition: filter .12s, transform .05s;
+  white-space: nowrap;
 }
 button:hover { filter: brightness(1.12); }
 button:active { transform: translateY(1px); }
@@ -174,12 +233,19 @@ button:disabled { opacity: .35; cursor: not-allowed; }
 button.primary { background: var(--blue); }
 button.success { background: var(--green); }
 button.danger { background: var(--red); }
-button.big { font-size: 16px; padding: 12px 22px; }
+button.big { font-size: 16px; padding: 12px 18px; }
+/* Кнопки «Чек/Колл <сумма>» и «Ставка/Рейз» — фиксированной ширины (по самой
+   длинной надписи): иначе сумма в надписи сдвигала соседние органы управления
+   на десятки пикселей, и клик по запомненной зоне попадал бы в другую кнопку. */
+#checkCallBtn { width: 128px; display: grid; grid-template-columns: 40px 1fr;
+  align-items: center; text-align: left; }
+#callAmount { white-space: nowrap; }          /* сумма — отдельное поле с фиксированным началом */
+#raiseBtn { width: 88px; }
 
 #nextHandFloat.hidden { display: none; }
 
 .raise-group { display: flex; align-items: center; gap: 8px; }
-#raiseSlider { width: 150px; }
+#raiseSlider { width: 90px; }
 #raiseInput {
   width: 76px; background: var(--bg); color: var(--text);
   border: 1px solid var(--line); border-radius: 7px; padding: 8px 6px; font-size: 15px; text-align: center;
@@ -187,12 +253,16 @@ button.big { font-size: 16px; padding: 12px 22px; }
 .presets { display: flex; gap: 4px; }
 .presets button { background: transparent; border: 1px solid var(--line); color: var(--dim); font-size: 12px; padding: 6px 8px; font-weight: 500; }
 
+/* ---------- журнал и статус ---------- */
+
 .log-panel {
-  width: 320px; background: var(--panel); border: 1px solid var(--line);
+  min-width: 0; contain: size;
+  background: var(--panel); border: 1px solid var(--line);
   border-radius: 14px; display: flex; flex-direction: column; overflow: hidden;
+  min-height: 0;
 }
 .log-title { padding: 10px 14px; border-bottom: 1px solid var(--line); color: var(--dim); font-size: 13px; text-transform: uppercase; letter-spacing: 1px; }
-.log { padding: 10px 14px; overflow-y: auto; flex: 1; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 13px; display: flex; flex-direction: column-reverse; }
+.log { padding: 10px 14px; overflow-y: auto; flex: 1; min-height: 0; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 13px; }
 .log .entry { padding: 3px 0; border-bottom: 1px dashed #222a3a; }
 .log .bot { color: var(--blue); }
 .log .hero { color: var(--green); }
