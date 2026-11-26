@@ -55,6 +55,117 @@ def test_late_position_opens_wider_than_early():
     assert len(r.classes) >= 16
 
 
+# ---------- позиция префлоп: шкала кончается кнопкой ----------
+
+def _table(n: int) -> Snapshot:
+    """Префлоп n-макс: кнопка у места 1, все при стеках."""
+    return HandEngine(seat_stacks={s: 200.0 for s in range(1, n + 1)}, button_seat=1,
+                      seed=1).snapshot_for(1)
+
+
+def _sixmax_first_in(hero: int) -> Snapshot:
+    """6-макс, кнопка — место 6 (SB 1, BB 2, UTG 3, MP 4, CO 5): все до героя сбросили — герой открывает."""
+    engine = HandEngine(seat_stacks={s: 200.0 for s in range(1, 7)}, button_seat=6, seed=1)
+    while engine.actor_seat != hero:
+        engine.apply("fold")
+    return engine.snapshot_for(hero)
+
+
+def _sixmax_opened_by(raiser: int) -> Snapshot:
+    """Тот же стол: все до raiser сбросили, он открыл минимальным рейзом; срез — для большого блайнда."""
+    engine = HandEngine(seat_stacks={s: 200.0 for s in range(1, 7)}, button_seat=6, seed=1)
+    while engine.actor_seat != raiser:
+        engine.apply("fold")
+    engine.apply("raise", next(la.amount_to for la in engine.legal() if la.action in ("bet", "raise")))
+    return engine.snapshot_for(2)
+
+
+def test_position_scale_ends_at_the_button():
+    """Кнопка — самая поздняя позиция (1); SB — на шаг у́же неё; в HU кнопка/SB — 0, BB — 1.
+
+    Прежде шкала шла от UTG до большого блайнда: кнопка получала (n-3)/(n-1).
+    """
+    from pokafer.brain.ranges import position_fraction, preflop_order
+    six = _table(6)
+    assert preflop_order(six) == [4, 5, 6, 1, 2, 3]          # UTG, MP, CO, BTN, SB, BB
+    assert [position_fraction(six, s) for s in preflop_order(six)] == [0.0, 0.2, 0.4, 1.0, 0.8, 1.0]
+    four = _table(4)
+    assert [position_fraction(four, s) for s in preflop_order(four)] == [0.0, 1.0, pytest.approx(2 / 3), 1.0]
+    hu = _table(2)
+    assert [position_fraction(hu, s) for s in preflop_order(hu)] == [0.0, 1.0]
+    with pytest.raises(ValueError):
+        position_fraction(six, 7)                             # места нет за столом
+
+
+@pytest.fixture
+def fixed_hand(monkeypatch):
+    """Любая рука — заданный процентиль, джиттер выключен: решение equity зависит только от позиции."""
+    from pokafer.brain.strategies import equity
+
+    class Fixed:
+        pct = 0.5
+
+        def percentile(self, cls):
+            return self.pct
+
+    fixed = Fixed()
+    monkeypatch.setattr(equity, "load_ranking", lambda: fixed)
+    monkeypatch.setitem(equity.PARAMS, "jitter", 0.0)
+    return fixed
+
+
+def _coin_flip_percentile(snap: Snapshot, fixed) -> float:
+    """Процентиль руки, на котором вероятность открытия равна половине."""
+    from pokafer.brain.strategies import equity
+
+    def raises(pct: float) -> float:
+        fixed.pct = pct
+        dist = equity.EquityStrategy(random.Random(1)).distribution(snap, legal_actions(snap))
+        return sum(p for k, p in dist.items() if k.partition(":")[0] in ("bet", "raise"))
+
+    low, high = 0.0, 1.0
+    assert raises(low) >= 0.5 > raises(high)                  # порог открытия — внутри шкалы
+    for _ in range(30):
+        mid = (low + high) / 2
+        if raises(mid) >= 0.5:
+            low = mid
+        else:
+            high = mid
+    return (low + high) / 2
+
+
+def test_button_opens_wider_than_everyone_else(fixed_hand):
+    """Открытие префлоп: чем позже позиция, тем шире; кнопка — шире всех и ровно на open_w_btn.
+
+    Раньше кнопка открывалась у́же малого блайнда (35% против 42%).
+    """
+    from pokafer.brain.strategies.equity import PARAMS
+    positions = {"UTG": 3, "MP": 4, "CO": 5, "SB": 1, "BTN": 6}
+    flip = {name: _coin_flip_percentile(_sixmax_first_in(hero), fixed_hand) for name, hero in positions.items()}
+    shares = {name: PARAMS["open_w_utg"] + (flip[name] - flip["UTG"]) for name in positions}
+    assert shares["BTN"] == pytest.approx(PARAMS["open_w_btn"], abs=0.005)
+    assert shares["UTG"] < shares["MP"] < shares["CO"] < shares["SB"] < shares["BTN"]
+
+
+def test_opponent_range_widens_with_position_up_to_the_button():
+    """Диапазон открывшего: с UTG — W_UTG, с кнопки — W_BTN, с SB — между кат-оффом и кнопкой."""
+    from pokafer.brain.ranges import W_BTN, W_UTG, _base_width
+
+    def width(raiser: int) -> float:
+        return _base_width(_sixmax_opened_by(raiser), raiser, "raise")
+
+    assert width(3) == pytest.approx(W_UTG) and width(6) == pytest.approx(W_BTN)
+    assert width(3) < width(5) < width(1) < width(6)
+
+
+def test_button_raise_is_a_steal():
+    """Рейз с кнопки — стил (порог шкалы 0,66): позиция рейзера — 1, а не 0,6."""
+    from pokafer.brain.strategies.equity import _Context
+
+    snap = _sixmax_open_vs_btn(2)
+    assert _Context(snap, legal_actions(snap), None).raiser_pos_frac == 1.0
+
+
 def test_postflop_bet_narrows_range():
     snap_no_bet = _snapshot(["As", "Ac"], ["7s", "8d", "2h"])
     with_bet = Snapshot(
