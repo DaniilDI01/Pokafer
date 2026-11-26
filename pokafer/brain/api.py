@@ -16,9 +16,11 @@ from __future__ import annotations
 import json
 import random
 import time
+from collections.abc import Iterable
 
 from pokafer.brain import strategies
 from pokafer.brain.memory import InMemoryProfileStore
+from pokafer.brain.strategies.base import normalize
 from pokafer.core.legal import LegalAction, legal_actions
 from pokafer.core.schema import Decision, Snapshot
 
@@ -52,18 +54,28 @@ class Brain:
 
     # ---------- принятие решения ----------
 
-    def decide(self, snap: Snapshot, profiles: dict[str, dict] | None = None) -> Decision:
+    def decide(self, snap: Snapshot, profiles: dict[str, dict] | None = None,
+               allowed: Iterable[str] | None = None) -> Decision:
         """Snapshot (+ опц. профили оппонентов) -> Decision.
 
         Мозг чистый: состояние приходит в аргументах. Если profiles не
         переданы, но платформа инъецировала память (memory), профили
         читаются из неё; хранит и собирает их — платформа, не мозг.
+
+        allowed — типы действий, которые платформа может исполнить (например,
+        история раздачи восстановлена неточно — только фолд/чек/колл).
+        Стратегия считает распределение по полному меню; вес
+        запрещённых отбрасывается, остаток перенормировывается. Не осталось
+        ничего — чек или колл.
         """
         t0 = time.perf_counter()
         legal = legal_actions(snap)
         if profiles is None and self.memory is not None:
             profiles = self.opponent_profiles(snap) or None
         dist = self.strategy.distribution(snap, legal, profiles)
+        if allowed is not None:
+            dist = normalize({k: w for k, w in dist.items() if k.partition(":")[0] in allowed}) \
+                or {next(la.key for la in legal if la.action in ("check", "call")): 1.0}
         chosen = self._sample(dist, legal)
 
         reasoning = self.strategy.explain(snap, legal, dist)

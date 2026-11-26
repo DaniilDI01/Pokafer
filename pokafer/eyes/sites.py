@@ -93,7 +93,7 @@ class Preset:
             node = node[part]
         return node
 
-    def _to_px(self, rect, window: tuple[int, int, int, int]) -> Rect:
+    def to_px(self, rect, window: tuple[int, int, int, int]) -> Rect:
         wx, wy, ww, wh = window
         fx, fy, fw, fh = rect
         if self.coords == "ref_px" and self.viewport_ref:
@@ -106,14 +106,34 @@ class Preset:
         node = self.node(path)
         if not _is_rect(node):
             raise KeyError(f"узел {path!r} в пресете {self.name!r} — не зона")
-        return self._to_px(node, window)
+        return self.to_px(node, window)
 
     def slots(self, path: str, window: tuple[int, int, int, int]) -> list[Rect]:
         """Список зон-слотов по пути ('hero.cards', 'board.slots') -> пиксели."""
         node = self.node(path)
         if not (isinstance(node, list) and node and all(_is_rect(n) for n in node)):
             raise KeyError(f"узел {path!r} в пресете {self.name!r} — не список слотов")
-        return [self._to_px(n, window) for n in node]
+        return [self.to_px(n, window) for n in node]
+
+
+def template_dir(preset: Preset, templates_dir: Path | None = None) -> Path:
+    """Папка шаблонов пресета (карты, пустые слоты, эталоны индикаторов).
+
+    Читатели отказываются работать, если шаблонов нет или они от другой
+    калибровки: зоны и шаблоны снимаются одной калибровкой, и смешивать их
+    нельзя.
+    """
+    base = (templates_dir or EYES_DIR / "templates") / preset.card_templates
+    if not base.is_dir():
+        raise FileNotFoundError(f"нет шаблонов пресета {preset.name!r}: {base} "
+                                "(соберите: scripts/calibrate_pokafer.py)")
+    stored = (base / "calibration_id").read_text(encoding="utf-8").strip()
+    if preset.calibration_id != stored:
+        raise ValueError(
+            f"шаблоны пресета {preset.name!r} от другой калибровки "
+            f"(пресет {preset.calibration_id!r}, шаблоны {stored!r}): "
+            "зоны и шаблоны снимаются одной калибровкой — перезапустите её")
+    return base
 
 
 def load_registry(path: Path | None = None) -> dict:

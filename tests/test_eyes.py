@@ -13,7 +13,7 @@ from types import SimpleNamespace
 import pytest
 from PIL import Image, ImageDraw, ImageFont
 
-from pokafer.eyes import sites
+from pokafer.eyes import sites, table_setup
 from pokafer.eyes.browser import find_on_screen
 from pokafer.eyes.cards import ACCEPT_FRAC, CardReader, _parse_name, diff_fraction
 from pokafer.eyes.slots import card_slots, slot_rect
@@ -302,6 +302,78 @@ def test_tighten_cuts_blank_margins():
     assert tighten(Image.new("RGB", (30, 12), (20, 30, 40))).size == (30, 12)   # пусто — как было
 
 
+def test_tighten_can_keep_only_the_obvious_marks():
+    """ink_diff = STRONG_INK: полоса сукна на краю зоны (контраст ~45) — уже не чернила."""
+    from pokafer.eyes.numbers import STRONG_INK, contrast, tighten
+    img = Image.new("RGB", (89, 20), (34, 36, 34))                 # табличка места
+    draw = ImageDraw.Draw(img)
+    draw.rectangle((80, 3, 88, 19), fill=(77, 77, 77))             # полоса сукна на краю
+    draw.ellipse((1, 3, 10, 15), outline=(236, 236, 236), width=3)  # «0»
+    assert tighten(img).width == 89 and contrast(img) > STRONG_INK  # обычная обрезка полосу не отбрасывает
+    assert tighten(img, ink_diff=STRONG_INK).width < 20             # знак — вплотную
+    assert contrast(Image.new("RGB", (40, 20), (20, 30, 40))) == 0  # пусто
+
+
+def _zero_stack_frame():
+    """Зона стека как в бою: слева «0» игрока в олл-ине, на краю — сукно за табличкой."""
+    frame = Image.new("RGB", (200, 100), (34, 36, 34))               # табличка места
+    zero = Image.open(Path(__file__).with_name("data") / "stack_zero.png").convert("RGB")
+    frame.paste(zero, (20, 10))
+    return frame
+
+
+class _QueueEngine:
+    """Распознаватель без модели: отвечает по очереди; помнит размеры поданных картинок."""
+
+    min_score = 0.6
+
+    def __init__(self, *answers):
+        self.answers, self.sizes = list(answers), []
+
+    def read(self, image):
+        self.sizes.append(image.size)
+        return self.answers.pop(0)
+
+
+def test_lone_zero_in_a_wide_zone_is_reread_tight(eyes_dir):
+    """Число не вышло, а явные знаки в зоне есть: перечитать вплотную к ним.
+
+    Стек олл-ина — одиночный «0»; сукно на краю зоны не даёт срезать поля, и
+    в широкой зоне модель читает знак как иероглиф-точку (найдено в бою).
+    """
+    from pokafer.eyes.numbers import NumberReader
+    preset = _number_preset(eyes_dir)
+    preset.zones["hero"]["stack"] = (0.1, 0.1, 0.445, 0.2)          # пиксели (20, 10, 89, 20)
+    preset.zones["numbers"] = {"hero.stack": 36.0}
+    engine = _QueueEngine(("。", 0.73), ("0", 0.98))
+    reading = NumberReader(preset, engine=engine).read(_zero_stack_frame(), "hero.stack")
+    assert (reading.state, reading.value) == ("number", 0.0)
+    assert engine.sizes[0] == (89, 20) and engine.sizes[1][0] < 20   # второй раз — вплотную к знаку
+
+
+def test_nothing_to_reread_without_obvious_marks(eyes_dir):
+    """Пустая зона или текст без явного контраста: перечитывать нечего — один вызов модели."""
+    from pokafer.eyes.numbers import NumberReader
+    preset = _number_preset(eyes_dir)
+    preset.zones["numbers"] = {"hero.stack": 26.0}
+    frame = Image.new("RGB", (200, 100), PLATE)
+    ImageDraw.Draw(frame).text((30, 12), "All-in", font=ImageFont.load_default(), fill=(70, 80, 90))
+    engine = _QueueEngine(("All-in", 0.9))
+    reading = NumberReader(preset, engine=engine).read(frame, "hero.stack")
+    assert reading.state == "none" and engine.sizes == [(60, 20)]
+
+
+def test_ocr_reads_the_lone_zero_of_an_all_in_stack(eyes_dir):
+    """Настоящая модель на кадре из боя: стек олл-ина «0», край зоны — сукно. Читается нулём."""
+    pytest.importorskip("rapidocr")
+    from pokafer.eyes.numbers import NumberReader, OcrEngine
+    preset = _number_preset(eyes_dir)
+    preset.zones["hero"]["stack"] = (0.1, 0.1, 0.445, 0.2)          # пиксели (20, 10, 89, 20)
+    preset.zones["numbers"] = {"hero.stack": 36.0}
+    reading = NumberReader(preset, engine=OcrEngine()).read(_zero_stack_frame(), "hero.stack")
+    assert (reading.state, reading.value) == ("number", 0.0) and reading.score > 0.6, reading
+
+
 # ---------- читатель чисел ----------
 
 class _StubEngine:
@@ -367,6 +439,39 @@ def test_number_reader_hidden_element_never_calls_the_model(eyes_dir):
     engine = _StubEngine()
     got = NumberReader(preset, engine=engine).read(_number_frame(chip_shown=False), "hero.bet")
     assert got.state == "empty" and engine.calls == 0     # фишки нет — сукно вместо золота
+
+
+def test_number_reader_does_not_reread_unchanged_zone(eyes_dir, monkeypatch):
+    """Не изменившаяся зона читается по памяти: тот же ответ без вызова модели."""
+    from pokafer.eyes import numbers as module
+    from pokafer.eyes.numbers import NumberReader
+    preset = _number_preset(eyes_dir)
+    preset.zones["numbers"] = {"hero.bet": _luma(GOLD), "hero.stack": _luma(PLATE)}
+    monkeypatch.setattr(module, "CACHE_SIZE", 1)         # памяти хватает на одну картинку
+    engine = _StubEngine(("12.5", 0.99))
+    reader = NumberReader(preset, engine=engine)
+    frame = _number_frame()
+    first = reader.read(frame, "hero.bet")
+    assert reader.read(frame, "hero.bet") is first and engine.calls == 1      # те же пиксели — из памяти
+    other = _number_frame()
+    ImageDraw.Draw(other).rectangle((125, 62, 130, 70), fill=(0, 0, 0))       # другие цифры — другой кадр
+    reader.read(other, "hero.bet")
+    assert engine.calls == 2
+    reader.read(frame, "hero.bet")                                            # первый вытеснен — читается снова
+    assert engine.calls == 3
+
+
+def test_card_reader_does_not_reread_unchanged_slot(reader, monkeypatch):
+    from pokafer.eyes import cards as module
+    built = []
+    real = module._Ref
+    monkeypatch.setattr(module, "_Ref", lambda img: (built.append(1), real(img))[1])
+    frame = _frame((10, synth_card("A", "s")))
+    rect = (10, 10, W, H)
+    first = reader.read(frame, rect, slot="board.slots[1]")
+    assert reader.read(frame, rect, slot="board.slots[1]") == first and len(built) == 1
+    reader.read(frame, rect)                                  # без слота — другой вопрос (нет эталона пустого)
+    assert len(built) == 2
 
 
 def test_number_reader_requires_zones(eyes_dir):
@@ -456,13 +561,92 @@ def test_perceive_reads_cards_and_numbers(reader):
     assert cards["board.slots[0]"].state == "empty"              # сукно с эталоном пустого
     assert cards["board.slots[1]"].state == "unknown"            # сукно без эталона пустого
     assert (p.numbers["hero.stack"].state, p.numbers["hero.stack"].value) == ("number", 100.0)
-    assert set(p.timings) == {"cards", "numbers", "total"}
+    assert set(p.timings) == {"cards", "numbers", "flags", "total"}
+    assert p.flags == {} and p.flag_rects == {}                        # индикаторов в пресете нет
     state = p.to_state()                                        # для зеркала: чистый JSON
     assert state["seq"] == 7 and state["size"] == [200, 100]
     assert {"face", "unknown", "empty"} <= {c["state"] for c in state["cards"]}
     assert state["numbers"] == [{"path": "hero.stack", "rect": [150, 5, 30, 18], "state": "number",
                                  "value": 100.0, "text": "100", "score": 0.98}]
+    assert state["flags"] == []
     json.dumps(state)
+
+
+# ---------- индикаторы: зона -> вкл / выкл / неизвестно ----------
+
+# кольцо аватара ходящего места — золото (GOLD), погашенного — сукно (FELT)
+
+
+def _flag_preset(eyes_dir):
+    """Пресет «t» + два индикатора с эталонами: hero.turn (золото/сукно), hand.over."""
+    from pokafer.eyes.flags import FlagReader
+    preset = sites.load_preset("t")
+    preset.zones["flags"] = {"hero.turn": (0.100000, 0.100000, 0.050000, 0.050000),
+                             "hand.over": (0.500000, 0.500000, 0.050000, 0.050000)}
+    base = eyes_dir / "templates" / "t"
+    base.mkdir(parents=True, exist_ok=True)
+    (base / "calibration_id").write_text("id1\n", encoding="utf-8")
+    for name, on, off in (("hero.turn", GOLD, FELT), ("hand.over", BLUE, PLATE)):
+        Image.new("RGB", (10, 5), on).save(base / f"flag_{name}_on.png")
+        Image.new("RGB", (10, 5), off).save(base / f"flag_{name}_off.png")
+    return preset, FlagReader(preset, templates_dir=eyes_dir / "templates")
+
+
+def _blend(a, b, t):
+    return tuple(round(x + (y - x) * t) for x, y in zip(a, b))
+
+
+def test_flag_reader_on_off_and_unknown(eyes_dir):
+    """Близко к эталону — вкл/выкл; ни к тому, ни к другому — неизвестно (не информация)."""
+    _, reader = _flag_preset(eyes_dir)
+    frame = Image.new("RGB", (200, 100), FELT)
+
+    def paint(color):
+        frame.paste(Image.new("RGB", (10, 5), color), (20, 10))
+        return reader.read(frame, "hero.turn")
+
+    assert paint(GOLD).state == "on" and paint(GOLD).score == 0.0
+    assert paint(FELT).state == "off"
+    near = paint(_blend(GOLD, FELT, 0.25))          # на четверти пути к другому эталону
+    assert (near.state, round(near.score, 2)) == ("on", 0.25)
+    assert paint(_blend(GOLD, FELT, 0.35)).state == "unknown"   # дальше порога 0.30
+    assert paint((255, 0, 255)).state == "unknown"          # вовсе не то (курсор, подсказка)
+    frame.paste(Image.new("RGB", (200, 100), FELT), (0, 0))
+    frame.paste(Image.new("RGB", (10, 5), BLUE), (100, 50))
+    assert reader.read(frame, "hand.over").state == "on"
+    assert reader.read(frame, "hero.turn").state == "off"   # своя зона, свой эталон
+    assert reader.paths() == ["hand.over", "hero.turn"] and reader.zone("hero.turn") == (20, 10, 10, 5)
+    with pytest.raises(KeyError, match="seat.pos_top.turn"):
+        reader.read(frame, "seat.pos_top.turn")
+
+
+def test_flag_reader_needs_same_calibration_and_tolerates_no_flags(eyes_dir):
+    from pokafer.eyes.flags import FlagReader
+    preset, _ = _flag_preset(eyes_dir)
+    (eyes_dir / "templates" / "t" / "calibration_id").write_text("other\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="другой калибровки"):
+        FlagReader(preset, templates_dir=eyes_dir / "templates")
+    del preset.zones["flags"]                      # пресет без индикаторов — читатель без зон
+    assert FlagReader(preset, templates_dir=eyes_dir / "templates").paths() == []
+
+
+def test_perceive_reads_flags(eyes_dir, reader):
+    """Индикаторы пресета читаются в том же кадре и уходят в зеркало со своими зонами."""
+    from pokafer.eyes.flags import FlagReader
+    from pokafer.eyes.perceive import perceive
+    preset = reader.preset
+    preset.zones["flags"] = {"hero.turn": (0.100000, 0.500000, 0.150000, 0.180000)}   # (20, 50, 30, 18)
+    base = eyes_dir / "templates" / "t"
+    Image.new("RGB", (30, 18), GOLD).save(base / "flag_hero.turn_on.png")
+    Image.new("RGB", (30, 18), FELT).save(base / "flag_hero.turn_off.png")
+    flags = FlagReader(preset, templates_dir=eyes_dir / "templates")
+    frame = _frame((10, synth_card("A", "s")))
+    frame.paste(Image.new("RGB", (30, 18), GOLD), (20, 50))
+    p = perceive(frame, reader, _number_reader(preset), seq=3, flag_reader=flags)
+    assert p.flags["hero.turn"].state == "on" and p.flag_rects["hero.turn"] == (20, 50, 30, 18)
+    assert p.to_state()["flags"] == [{"path": "hero.turn", "rect": [20, 50, 30, 18],
+                                      "state": "on", "score": 0.0}]
+    assert p.timings["flags"] >= 0.0
 
 
 @pytest.mark.parametrize("c0, c1, b0, b1, want", [
@@ -508,6 +692,31 @@ def test_watch_reads_every_frame_and_skips_hidden_window(reader):
     assert restored == [1]
 
 
+def test_watch_attaches_extra_to_the_mirror_state(reader):
+    """extra (что думает трекер) читается ПОСЛЕ on_perception и уходит в зеркало с каждым кадром."""
+    from pokafer.eyes import loop, mirror
+    session = "pytest-watch-extra"
+    publisher = mirror.MirrorPublisher(session, "http://table")
+    frame = _frame((10, synth_card("A", "s")))
+    seen = []
+    try:
+        subscriber = mirror.MirrorSubscriber(session)
+        try:
+            subscriber.subscribe(True)
+            grabs = []
+            loop.watch(lambda: grabs.append(1) or frame, reader, _number_reader(reader.preset), publisher,
+                       fps=1000, on_perception=seen.append, extra=lambda: {"frames": len(seen)},
+                       running=lambda: len(grabs) < 3)
+            state, _ = mirror.decode(subscriber.poll())
+            assert state["extra"] == {"frames": 3}      # свежее: после обработки всех кадров
+        finally:
+            subscriber.subscribe(False)
+            subscriber.close()
+    finally:
+        publisher.close()
+
+
+
 def test_watch_publishes_to_mirror_only_with_a_viewer(reader):
     from pokafer.eyes import loop, mirror
     session = "pytest-watch"
@@ -540,10 +749,16 @@ class _FakeBrowser:
     viewport = (200, 100)
 
     def __init__(self):
-        self.clicks = []
+        self.clicks, self.keys = [], []
 
     def click_at(self, x, y, park=None):
         self.clicks.append((x, y, park))
+
+    def select_all(self):
+        self.keys.append("select_all")
+
+    def type_text(self, text):
+        self.keys.append(text)
 
 
 def test_actuator_parks_cursor_off_the_button(eyes_dir):
@@ -565,6 +780,93 @@ def test_actuator_without_parking_point_leaves_cursor(eyes_dir):
     assert actuator.park is None
     actuator.check_or_call()
     assert browser.clicks == [(110, 55, None)]
+
+
+def test_actuator_types_the_raise_and_plays_all_in_by_preset(eyes_dir):
+    """Рейз до суммы: клик в поле, Ctrl+A (заменить, не дописать), ввод, «Рейз»; олл-ин — кнопкой пресета."""
+    from pokafer.eyes.actuator import Actuator
+    preset = sites.load_preset("t")
+    preset.zones["act"] = {"input": (0.2, 0.2, 0.1, 0.1), "raise": (0.4, 0.8, 0.1, 0.1),
+                           "preset_max": (0.6, 0.86, 0.03, 0.04), "park": (0.9, 0.9, 0.02, 0.04)}
+    browser = _FakeBrowser()
+    actuator = Actuator(browser, preset)
+    actuator.raise_to(12.5, 200.0)
+    assert browser.clicks[0] == (50, 25, (182, 92))                # поле суммы
+    assert browser.keys == ["select_all", "12.5"]
+    assert browser.clicks[1] == (90, 85, (182, 92))                # кнопка «Рейз»
+    browser.clicks.clear()
+    browser.keys.clear()
+    actuator.raise_to(200.0, 200.0)                                # олл-ин: ввод не нужен
+    assert browser.keys == [] and browser.clicks == [(123, 88, (182, 92)), (90, 85, (182, 92))]
+
+
+# ---------- подготовка стола: бой и демо сами поднимают наш стол ----------
+
+class _FakeServer:
+    """«Процесс стола»: жив, пока не остановлен; помнит, что с ним сделали."""
+
+    def __init__(self, exits=False):
+        self.exits, self.calls = exits, []
+
+    def poll(self):
+        return 1 if self.exits else None
+
+    def terminate(self):
+        self.calls.append("terminate")
+
+    def wait(self, timeout=None):
+        self.calls.append(("wait", timeout))
+        return 1
+
+    def kill(self):
+        self.calls.append("kill")
+
+
+def _no_real_processes(monkeypatch, proc):
+    started = []
+
+    def popen(args, **kw):
+        started.append((args, kw))
+        return proc
+
+    monkeypatch.setattr(table_setup.subprocess, "Popen", popen)
+    return started
+
+
+def test_fight_raises_the_table_itself_and_stops_it_after(monkeypatch):
+    """Наш стол не запущен: поднимается скриптом стола на нужном порту и останавливается в конце."""
+    proc = _FakeServer()
+    started = _no_real_processes(monkeypatch, proc)
+    answering = iter([False, False, True])         # не отвечал, не отвечал — ответил
+    monkeypatch.setattr(table_setup, "answers", lambda url: next(answering))
+    table = table_setup.ensure_table("http://127.0.0.1:8010")
+    assert table is proc
+    args, options = started[0]
+    assert args[0] == sys.executable and args[1].endswith("scripts/serve_table.py") and args[2:] == ["--port", "8010"]
+    assert options["cwd"] == table_setup.ROOT                         # pokafer stop узнаёт процесс по репозиторию
+    table_setup.stop_table(table)
+    assert proc.calls == ["terminate", ("wait", 5)]
+
+
+def test_running_or_foreign_table_is_left_alone(monkeypatch):
+    """Уже запущенный стол не перезапускается; чужой рум не поднимаем и не судим."""
+    started = _no_real_processes(monkeypatch, _FakeServer())
+    monkeypatch.setattr(table_setup, "answers", lambda url: True)
+    assert table_setup.ensure_table("http://127.0.0.1:8010") is None
+    monkeypatch.setattr(table_setup, "answers", lambda url: False)
+    assert table_setup.ensure_table("https://some.room/table/1") is None
+    assert started == []
+    table_setup.stop_table(None)                                      # чужой стол — нечего останавливать
+
+
+def test_table_that_fails_to_start_is_explained(monkeypatch):
+    """Стол упал, не успев ответить: подсказка командой, а не трассировка."""
+    proc = _FakeServer(exits=True)
+    _no_real_processes(monkeypatch, proc)
+    monkeypatch.setattr(table_setup, "answers", lambda url: False)
+    with pytest.raises(SystemExit, match="pokafer table --port 8010"):
+        table_setup.ensure_table("http://127.0.0.1:8010", timeout=0.5)
+    assert proc.calls[0] == "terminate"
 
 
 # ---------- стенд правды: сверка и «действие принято» ----------
@@ -593,7 +895,7 @@ def _frozen_flop():
 
 def test_state_key_notices_bet_behind_the_hero():
     """Герой чекнул, бот за ним поставил: та же улица, снова ход героя — а состояние другое."""
-    from pokafer.eyes.truth import _key
+    from pokafer.eyes.truth import state_key as _key
     before = _frozen_flop()
     after = json.loads(json.dumps(before))
     after.update(to_act=2)                                      # мгновение: ходит бот

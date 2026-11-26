@@ -14,12 +14,15 @@
 без ставки), решается по фону зоны: его яркость знает пресет. Пустые поля
 зоны перед распознаванием срезаются (tighten): на плотном кропе модель
 заметно точнее — одиночная цифра в широкой пустой зоне читается плохо.
+Числа не вышло, а явные знаки в зоне есть (полоса сукна на краю зоны не
+дала срезать поля) — зона перечитывается вплотную к знакам.
 
 Зависимости — extra [ocr]: rapidocr, onnxruntime (+ numpy, opencv-headless).
 """
 from __future__ import annotations
 
 import re
+from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -35,7 +38,9 @@ MIN_SCORE = 0.6    # уверенность модели ниже — число
 BG_TOL = 14        # фон зоны узнаётся по медианной яркости (±BG_TOL)
 INK_DIFF = 40      # отличие яркости от фона зоны сильнее — «чернила»
 MIN_INK = 2        # меньше «чернил» в строке/столбце — шум, не текст
+STRONG_INK = 110   # контраст «настоящих» чернил; полоса сукна за табличкой даёт до ~45
 TIGHT_MARGIN = 2   # пустое поле вокруг числа после обрезки, px
+CACHE_SIZE = 512   # сколько разных картинок зон помнит читатель: состояния стола повторяются
 
 # число: цифры с разделителями внутри и, возможно, суффиксом порядка
 # (k/K — тысячи, M/m — миллионы; для русских румов — к/К и м/М)
@@ -54,12 +59,22 @@ class NumberReading:
     score: float = 0.0             # уверенность модели, 0..1
 
 
-def tighten(image: Image.Image, margin: int = TIGHT_MARGIN) -> Image.Image:
-    """Обрезать пустые поля зоны: оставить то, что отличается от фона, ± margin."""
+def contrast(image: Image.Image) -> int:
+    """Насколько сильно зона отличается от своего фона (медиана по зоне): 0 — пусто."""
+    gray = np.asarray(image.convert("L"), dtype=np.int16)
+    return int(np.abs(gray - np.median(gray)).max()) if gray.size else 0
+
+
+def tighten(image: Image.Image, margin: int = TIGHT_MARGIN, ink_diff: int = INK_DIFF) -> Image.Image:
+    """Обрезать пустые поля зоны: оставить то, что отличается от фона, ± margin.
+
+    ink_diff — какой контраст считать чернилами: INK_DIFF — обычное чтение;
+    STRONG_INK — только явные знаки (полоса сукна на краю зоны уже не чернила).
+    """
     gray = np.asarray(image.convert("L"), dtype=np.int16)[1:-1, 1:-1]   # без рамки в 1 px
     if gray.size == 0:
         return image
-    ink = np.abs(gray - int(np.median(gray))) > INK_DIFF
+    ink = np.abs(gray - int(np.median(gray))) > ink_diff
     cols = np.flatnonzero(ink.sum(axis=0) >= MIN_INK)
     rows = np.flatnonzero(ink.sum(axis=1) >= MIN_INK)
     if cols.size == 0 or rows.size == 0:
@@ -167,6 +182,9 @@ class NumberReader:
         self.engine = engine or OcrEngine()
         self.bg_lum: dict[str, float] = {path: float(lum) for path, lum in zones.items()}
         self.decimal: str = preset.zones.get("numbers_format", {}).get("decimal", ".")
+        # ответ модели зависит только от пикселей зоны: не изменившаяся зона не
+        # читается заново (между кадрами меняются одна-две зоны из четырнадцати)
+        self._memo: OrderedDict[bytes, NumberReading] = OrderedDict()
 
     def paths(self) -> list[str]:
         """Зоны чисел пресета (по алфавиту)."""
@@ -190,13 +208,29 @@ class NumberReader:
         crop = frame.crop((x, y, x + w, y + h))
         if abs(_median(_pixels(crop.convert("L"))) - self.bg_lum[path]) > BG_TOL:
             return NumberReading("empty")
+        pixels = crop.tobytes()
+        reading = self._memo.get(pixels)
+        if reading is not None:
+            self._memo.move_to_end(pixels)
+            return reading
         text, score = self.engine.read(crop)
         value = parse_amount(text, self.decimal)
+        if value is None and contrast(crop) > STRONG_INK:
+            # числа не вышло, а явные знаки в зоне есть: один знак в широкой
+            # зоне (сукно на её краю не даёт срезать поля) модель читает плохо —
+            # стек олл-ина «0» выходил «。». Перечитать вплотную к знакам.
+            text, score = self.engine.read(tighten(crop, ink_diff=STRONG_INK))
+            value = parse_amount(text, self.decimal)
         if value is None:
-            return NumberReading("none", text=text, score=score)
-        confident = score >= self.engine.min_score
-        return NumberReading("number" if confident else "low", value, text, score)
+            reading = NumberReading("none", text=text, score=score)
+        else:
+            confident = score >= self.engine.min_score
+            reading = NumberReading("number" if confident else "low", value, text, score)
+        self._memo[pixels] = reading
+        while len(self._memo) > CACHE_SIZE:            # давние состояния уходят первыми
+            self._memo.popitem(last=False)
+        return reading
 
 
 __all__ = ["BG_TOL", "MIN_SCORE", "NumberReading", "NumberReader", "OcrEngine",
-           "parse_amount", "tighten"]
+           "contrast", "parse_amount", "tighten"]

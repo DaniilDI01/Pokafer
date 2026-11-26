@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from PIL import Image
 
 from pokafer.eyes.cards import CardReader, Reading
+from pokafer.eyes.flags import FlagReading, FlagReader
 from pokafer.eyes.numbers import NumberReading, NumberReader
 from pokafer.eyes.sites import Rect
 from pokafer.eyes.slots import CardSlot, card_slots
@@ -45,7 +46,9 @@ class Perception:
     numbers: dict[str, NumberReading]          # зона числа -> прочтение
     number_rects: dict[str, Rect]               # зона числа -> где она в кадре
     seats: dict[str, SeatCards]                 # место -> состояние его карт
-    timings: dict[str, float]                   # мс на этап: cards, numbers, total
+    timings: dict[str, float]                   # мс на этап: cards, numbers, flags, total
+    flags: dict[str, FlagReading] = dataclasses.field(default_factory=dict)      # индикатор -> вкл/выкл
+    flag_rects: dict[str, Rect] = dataclasses.field(default_factory=dict)        # индикатор -> где он в кадре
 
     def to_state(self) -> dict:
         """Состояние без кадра — JSON для зеркала (страница отладки) и журналов."""
@@ -62,12 +65,16 @@ class Perception:
                         for path, r in sorted(self.numbers.items())],
             "seats": [{"seat": seat, "state": sc.state, "cards": sc.cards}
                       for seat, sc in sorted(self.seats.items())],
+            "flags": [{"path": path, "rect": list(self.flag_rects[path]),
+                       "state": r.state, "score": round(r.score, 3)}
+                      for path, r in sorted(self.flags.items())],
         }
 
 
 def perceive(frame: Image.Image, card_reader: CardReader, number_reader: NumberReader,
-             seq: int = 0, window: Window = (0, 0, 0, 0)) -> Perception:
-    """Прочитать один кадр: все слоты карт и зоны чисел пресета."""
+             seq: int = 0, window: Window = (0, 0, 0, 0),
+             flag_reader: FlagReader | None = None) -> Perception:
+    """Прочитать один кадр: все слоты карт, зоны чисел и индикаторы пресета."""
     t0 = time.perf_counter()
     cards = [CardSeen(slot, card_reader.read(frame, slot.rect, slot=slot.path))
              for slot in card_slots(card_reader.preset, window)]
@@ -77,12 +84,21 @@ def perceive(frame: Image.Image, card_reader: CardReader, number_reader: NumberR
     for path in number_reader.paths():
         rects[path] = number_reader.zone(path, window)
         numbers[path] = number_reader.read(frame, path, window)
-    seats = _seat_cards(cards)
     t2 = time.perf_counter()
+    flags: dict[str, FlagReading] = {}
+    flag_rects: dict[str, Rect] = {}
+    if flag_reader is not None:
+        for path in flag_reader.paths():
+            flag_rects[path] = flag_reader.zone(path, window)
+            flags[path] = flag_reader.read(frame, path, window)
+    seats = _seat_cards(cards)
+    t3 = time.perf_counter()
     return Perception(seq, frame, cards, numbers, rects, seats,
                       {"cards": round((t1 - t0) * 1000, 2),
                        "numbers": round((t2 - t1) * 1000, 2),
-                       "total": round((t2 - t0) * 1000, 2)})
+                       "flags": round((t3 - t2) * 1000, 2),
+                       "total": round((t3 - t0) * 1000, 2)},
+                      flags, flag_rects)
 
 
 def _seat_cards(cards: list[CardSeen]) -> dict[str, SeatCards]:

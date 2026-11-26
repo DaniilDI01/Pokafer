@@ -2,19 +2,27 @@
 
     pokafer eyes-view [--port 8020]
 
-Конвейер глаз (pokafer eyes-demo, позже — бой) публикует состояние в
+Конвейер глаз (pokafer eyes-demo, pokafer fight) публикует состояние в
 разделяемую память (pokafer/eyes/mirror.py); этот процесс читает её и раздаёт
 браузеру: кадр JPEG + JSON с рамками и прочтениями. Страница рисует всё на
 одном холсте и перерисовывается только на новом кадре.
 
 Изоляция: зеркало — другой процесс. Пока страницу никто не открыл, конвейер
 не публикует вовсе; падение зеркала или страницы конвейер не замечает.
+Запускается само (start) и открывается в браузере (open_in_browser).
 """
 from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import re
+import subprocess
+import sys
+import threading
+import time
+import urllib.request
+import webbrowser
 from pathlib import Path
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -100,6 +108,41 @@ def serve(host: str = "127.0.0.1", port: int = 8020) -> None:
     import uvicorn
 
     uvicorn.run(create_viewer_app(), host=host, port=port, log_level="warning")
+
+
+def is_up(port: int) -> bool:
+    """Отвечает ли зеркало на этом порту (не поднимать второй)."""
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/health", timeout=0.6) as r:
+            return json.loads(r.read()).get("service") == "pokafer-eyes-view"
+    except (OSError, ValueError):
+        return False
+
+
+def start(port: int) -> bool:
+    """Поднять зеркало отдельным процессом, отвязанным от терминала. False — не ответило."""
+    subprocess.Popen([sys.executable, "-m", "pokafer.eyes.viewer", "--port", str(port)],
+                     cwd=Path(__file__).resolve().parents[2], start_new_session=True,
+                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    for _ in range(40):
+        time.sleep(0.25)
+        if is_up(port):
+            return True
+    return False
+
+
+def open_in_browser(url: str) -> None:
+    """Открыть зеркало в браузере по умолчанию — в фоне и без последствий для конвейера."""
+    def open() -> None:
+        try:
+            opened = webbrowser.open(url)
+        except Exception as e:      # отладочное окно не должно мешать конвейеру
+            opened = False
+            print(f"зеркало не открылось само ({e})", file=sys.stderr, flush=True)
+        if not opened:
+            print(f"откройте зеркало сами: {url}", file=sys.stderr, flush=True)
+
+    threading.Thread(target=open, daemon=True).start()
 
 
 def main() -> None:

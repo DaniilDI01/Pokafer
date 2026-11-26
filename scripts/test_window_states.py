@@ -16,10 +16,10 @@
 
 В каждом состоянии герой ходит только РЕАЛЬНЫМИ кликами актатора (курсор
 после клика уходит с кнопки), а перед каждым ходом замороженный кадр читается
-пикселями целиком (perceive) и сверяется с правдой сервера (pokafer/eyes/
-truth.py — мост для тестов, не рантайм). Зачёт: ни одной ошибки чтения, все
-клики приняты, свёрнутое окно не повисло; на X11 ещё и то, что чужое окно
-осталось над столом.
+пикселями целиком (perceive: карты, числа, индикаторы) и сверяется с правдой
+сервера (pokafer/eyes/truth.py — мост для тестов, не рантайм). Зачёт: ни одной
+ошибки чтения, все клики приняты, свёрнутое окно не повисло; на X11 ещё и то,
+что чужое окно осталось над столом.
 
 «Стол не поднялся» проверяется по порядку окон у оконного менеджера
 (xprop, X11), а не по пикселям монитора: поверх обоих окон может работать
@@ -41,10 +41,12 @@ from urllib.parse import quote
 from pokafer.eyes.actuator import Actuator
 from pokafer.eyes.capture import WindowHidden
 from pokafer.eyes.cards import CardReader
+from pokafer.eyes.flags import FlagReader
 from pokafer.eyes.numbers import NumberReader
 from pokafer.eyes.perceive import perceive
 from pokafer.eyes.sites import preset_for_domain
-from pokafer.eyes.truth import TableTruthFeed, card_ok, expected_cards, expected_numbers, number_ok
+from pokafer.eyes.truth import (TableTruthFeed, card_ok, expected_cards, expected_flags, expected_numbers,
+                                 flag_ok, number_ok)
 
 COVER_TITLE = "Pokafer — тест глаз: окно-перекрытие"
 COVER_PAGE = (
@@ -56,7 +58,7 @@ COVER_PAGE = (
     "<span style='color:#8a93a6'>Оно закроется само — ничего нажимать не нужно.</span></div>"
 )
 
-Eyes = namedtuple("Eyes", "preset cards numbers paths layouts")
+Eyes = namedtuple("Eyes", "preset cards numbers flags paths layouts")
 
 
 @contextmanager
@@ -117,7 +119,7 @@ def judge(feed: TableTruthFeed, eyes: Eyes, stat: dict, failures: list[str], tag
     image = feed.settled()
     if image is None:
         raise SystemExit("краска не устоялась: кадр снять не удалось")
-    seen = perceive(image, eyes.cards, eyes.numbers)
+    seen = perceive(image, eyes.cards, eyes.numbers, flag_reader=eyes.flags)
     readings = {c.slot.path: c.reading for c in seen.cards}
     for path, want in expected_cards(truth, eyes.preset).items():
         got = readings[path]
@@ -126,6 +128,14 @@ def judge(feed: TableTruthFeed, eyes: Eyes, stat: dict, failures: list[str], tag
         stat[(tag, "карты")][0] += ok
         if not ok:
             failures.append(f"{tag} {path}: правда {want!r}, прочитано {got.state}/{got.label!r}")
+    for path, lit in expected_flags(truth, eyes.flags.paths(), eyes.layouts).items():
+        got = seen.flags[path]
+        ok = flag_ok(lit, got)
+        stat[(tag, "индикаторы")][1] += 1
+        stat[(tag, "индикаторы")][0] += ok
+        if not ok:
+            failures.append(f"{tag} {path}: правда {'горит' if lit else 'погашен'}, "
+                            f"прочитано {got.state} (близость {got.score:.2f})")
     for path, want in expected_numbers(truth, eyes.paths, eyes.layouts).items():
         if path == "act.call_amount" and truth.get("hand_over"):
             continue                  # в завершённой руке надпись кнопки — прошлая
@@ -166,7 +176,7 @@ def main() -> None:
 
     preset = preset_for_domain(args.url.split("//")[-1])
     numbers = NumberReader(preset)
-    eyes = Eyes(preset, CardReader(preset), numbers, numbers.paths(),
+    eyes = Eyes(preset, CardReader(preset), numbers, FlagReader(preset), numbers.paths(),
                 preset.zones["meta"]["seat_layouts"])
     stat: dict = defaultdict(lambda: [0, 0])      # (состояние, что) -> [верно, всего]
     failures: list[str] = []

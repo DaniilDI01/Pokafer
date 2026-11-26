@@ -18,6 +18,7 @@ from __future__ import annotations
 import os
 import signal
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 from PIL import Image
@@ -27,6 +28,8 @@ from pokafer.eyes.capture import WindowHidden
 _PATCH = 32  # метка совмещения кадра с экраном, px
 COMMAND_TIMEOUT = 15   # сек ожидания ответа браузера на одну команду
 CLOSE_GRACE_SEC = 2.0  # сколько браузеру даётся выйти самому после quit()
+MOVE_MS = 0            # длительность движения курсора в клике, мс: у Selenium по умолчанию 250,
+                       # и клик с парковкой курсора стоил полсекунды (замер в бою на быстром столе)
 
 
 def _children(pid: int) -> list[tuple[int, bytes]]:
@@ -221,11 +224,11 @@ class TableBrowser:
 
         builder = ActionBuilder(self._driver)
         mouse = builder.add_pointer_input("mouse", "mouse")
-        mouse.create_pointer_move(origin="viewport", x=int(x), y=int(y))
+        mouse.create_pointer_move(origin="viewport", x=int(x), y=int(y), duration=MOVE_MS)
         mouse.create_pointer_down(button=MouseButton.LEFT)
         mouse.create_pointer_up(button=MouseButton.LEFT)
         if park is not None:
-            mouse.create_pointer_move(origin="viewport", x=int(park[0]), y=int(park[1]))
+            mouse.create_pointer_move(origin="viewport", x=int(park[0]), y=int(park[1]), duration=MOVE_MS)
         builder.perform()
 
     def set_window_state(self, state: str) -> None:
@@ -239,11 +242,34 @@ class TableBrowser:
         self._driver.execute_cdp_cmd("Browser.setWindowBounds",
                                      {"windowId": window_id, "bounds": {"windowState": state}})
 
+    def restore_when_hidden(self, message: str = "") -> Callable[[], None]:
+        """Колбэк для loop.watch(on_hidden=…): свёрнутое окно разворачивается.
+
+        message — что сказать пользователю, чтобы окно не сворачивали.
+        """
+        def on_hidden() -> None:
+            self.set_window_state("normal")
+            print("окно браузера было свёрнуто — развернул: браузер не рисует свёрнутую страницу"
+                  + (f"; {message}" if message else ""), flush=True)
+
+        return on_hidden
+
     def type_text(self, text: str) -> None:
         """Клавиатура: посимвольный ввод в активный элемент."""
         from selenium.webdriver.common.action_chains import ActionChains
 
         ActionChains(self._driver).send_keys(text).perform()
+
+    def select_all(self) -> None:
+        """Ctrl+A: выделить всё в активном поле ввода.
+
+        Тройной клик вместо этого выделения не давал: в первом бою ввод
+        дописался в прежнее значение поля («рейз до 5» вышел «до 45»).
+        """
+        from selenium.webdriver.common.action_chains import ActionChains
+        from selenium.webdriver.common.keys import Keys
+
+        ActionChains(self._driver).key_down(Keys.CONTROL).send_keys("a").key_up(Keys.CONTROL).perform()
 
     def key(self, key_name: str) -> None:
         """Одиночная клавиша (ENTER, TAB, ...)."""

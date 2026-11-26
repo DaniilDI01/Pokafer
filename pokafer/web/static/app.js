@@ -154,7 +154,7 @@ function renderVillains(v) {
       <div class="head">
         <div class="avatar">${BOT_AVATARS[(i + 1) % BOT_AVATARS.length]}</div>
         <div class="plate">
-          <div class="name">${b.name}${b.is_button ? ' <span class="button-mark">D</span>' : ""}</div>
+          <div class="name"><span class="who">${b.name}</span><span class="button-mark${b.is_button ? " on" : ""}"></span></div>
           <div class="stack"><span class="coin">💰</span><span class="amt">${fmt(b.stack)}</span></div>
           ${b.strategy ? `<div class="strat">${b.strategy}</div>` : ""}
           <div class="last-action"${action ? "" : " hidden"}>${action}</div>
@@ -207,8 +207,7 @@ function setActions(view) {
     els.raiseSlider.value = r.min;
     els.raiseInput.min = r.min; els.raiseInput.max = r.max;
     els.raiseInput.value = r.min;
-    const facing = legal.call !== null && legal.call !== undefined;
-    els.raiseBtn.textContent = facing ? "Рейз" : "Ставка";
+    els.raiseBtn.textContent = betIsOnTable(view) ? "Рейз" : "Ставка";
     els.raiseBtn.dataset.min = r.min; els.raiseBtn.dataset.max = r.max;
   }
 }
@@ -262,7 +261,7 @@ function renderView(v) {
   els.street.textContent = `${v.street} · рука #${v.hand_no}`;
   els.scoreline.textContent = v.stackline;
   els.hAmount.textContent = fmt(v.hero.stack);
-  els.heroBtn.textContent = v.hero.is_button ? "D" : "";
+  els.heroBtn.classList.toggle("on", v.hero.is_button);
   els.hBet.style.display = v.hero.bet > 0 ? "" : "none";
   els.hBet.textContent = v.hero.bet > 0 ? fmt(v.hero.bet) : "";
   els.seatHero.classList.toggle("active", v.to_act === 1 && !v.hand_over);
@@ -351,13 +350,19 @@ function currentRaise() {
   return Math.min(max, Math.max(min, Math.round(v * 100) / 100));
 }
 
+/* Глагол рейза — по тому, есть ли на столе СТАВКА (и своя в том числе), а не
+   по тому, нужно ли доплачивать: большому блайнду после лимпов отказывали —
+   страница слала «bet», сервер ждал «raise» («Нелегальное действие»). */
+function betIsOnTable(v) {
+  return v.hero.bet > 0 || v.bots.some((b) => !b.folded && b.bet > 0);
+}
+
 els.raiseBtn.onclick = () => {
   const amt = currentRaise();
   if (amt === null || !lastView) return;
-  const facing = lastView.legal && lastView.legal.call !== null && lastView.legal.call !== undefined;
-  const verb = facing ? "raise" : "bet";
+  const verb = betIsOnTable(lastView) ? "raise" : "bet";
   if (sendAction({ type: "action", action: verb, amount: amt }))
-    addLog(`Вы: ${facing ? "рейз до" : "ставка"} ${amt}`, "hero");
+    addLog(`Вы: ${verb === "raise" ? "рейз до" : "ставка"} ${amt}`, "hero");
 };
 
 els.raiseSlider.oninput = () => { els.raiseInput.value = els.raiseSlider.value; };

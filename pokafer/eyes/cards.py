@@ -17,12 +17,13 @@ scripts/calibrate_pokafer.py (по месту, с проверкой детер�
 """
 from __future__ import annotations
 
+from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
 
 from PIL import Image, ImageChops
 
-from pokafer.eyes.sites import EYES_DIR, Preset, Rect
+from pokafer.eyes.sites import Preset, Rect, template_dir
 
 DIFF_LEVEL = 25      # пиксель «отличается», если канал разошёлся сильнее
 BG_LEVEL = 215       # светлее этого — фон карты (не «чернила»)
@@ -30,6 +31,7 @@ EDGE_PX = 2          # кромка кропа не сравнивается (о
 CORNER_FRAC = 0.14   # радиус маски углов — доля ширины карты
 ACCEPT_FRAC = 0.06   # порог доли отличий: не больше — та же карта / рубашка
 EMPTY_FRAC = 0.02    # порог совпадения с эталоном пустого слота
+CACHE_SIZE = 1024    # сколько разных картинок слотов помнит читатель: стол меняется редко
 
 _DIFF_LUT = [255 if v > DIFF_LEVEL else 0 for v in range(256)]
 _INK_LUT = [255 if v < BG_LEVEL else 0 for v in range(256)]
@@ -118,18 +120,8 @@ class CardReader:
     """Читатель карт по шаблонам пресета: read(кадр, слот) -> Reading."""
 
     def __init__(self, preset: Preset, templates_dir: Path | None = None):
-        base = (templates_dir or EYES_DIR / "templates") / preset.card_templates
-        if not base.is_dir():
-            raise FileNotFoundError(f"нет шаблонов пресета {preset.name!r}: {base} "
-                                    "(соберите: scripts/calibrate_pokafer.py)")
-        id_file = base / "calibration_id"
-        stored = id_file.read_text(encoding="utf-8").strip() if id_file.exists() else None
-        if preset.calibration_id != stored:
-            raise ValueError(
-                f"шаблоны пресета {preset.name!r} от другой калибровки "
-                f"(пресет {preset.calibration_id!r}, шаблоны {stored!r}): "
-                "зоны и шаблоны снимаются одной калибровкой — перезапустите её")
-        self.calibration_id = stored
+        base = template_dir(preset, templates_dir)
+        self.calibration_id = preset.calibration_id
         self.preset = preset
         self._faces: dict[tuple[int, int], dict[str, _Ref]] = {}
         self._backs: dict[tuple[int, int], list[_Ref]] = {}
@@ -147,6 +139,7 @@ class CardReader:
             else:
                 self._empty[key] = ref
         self.slots_with_empty = sorted(self._empty)
+        self._memo: OrderedDict[tuple, Reading] = OrderedDict()   # (слот, пиксели) -> чтение
         if not self._faces:
             raise ValueError(f"в {base} нет шаблонов карт (card_*.png)")
 
@@ -164,8 +157,20 @@ class CardReader:
         """Слот кадра -> состояние и метка. slot ('board.slots[2]') подключает
         эталон пустого слота; без него пустой слот читается как unknown."""
         x, y, w, h = rect
-        query = _Ref(frame.crop((x, y, x + w, y + h)))
-        empty = self._empty.get(slot) if slot else None
+        crop = frame.crop((x, y, x + w, y + h))
+        # не изменившийся слот читается по памяти: те же пиксели — то же чтение
+        token = (slot, crop.tobytes())
+        known = self._memo.get(token)
+        if known is not None:
+            self._memo.move_to_end(token)
+            return known
+        reading = self._classify(_Ref(crop), self._empty.get(slot) if slot else None)
+        self._memo[token] = reading
+        while len(self._memo) > CACHE_SIZE:
+            self._memo.popitem(last=False)
+        return reading
+
+    def _classify(self, query: _Ref, empty: _Ref | None) -> Reading:
         if empty is not None and _diff(query, empty) <= EMPTY_FRAC:
             return Reading("empty")
         for back in self._backs.get(query.size, []):

@@ -52,8 +52,13 @@ COMMANDS = {
     ),
     "eyes-demo": (
         "scripts/eyes_demo.py",
-        "зрение в реальном времени: кадр страницы -> карты и числа -> зеркало",
+        "зрение в реальном времени: кадр страницы -> карты, числа, индикаторы -> трекер -> зеркало",
         "pokafer eyes-demo --url http://127.0.0.1:8010",
+    ),
+    "fight": (
+        "scripts/fight.py",
+        "бой: герой играет за столом только глазами — кадры → трекер → мозг → клик",
+        "pokafer fight --url http://127.0.0.1:8010 --strategy equity --hands 100",
     ),
     "eyes-view": (
         "scripts/eyes_view.py",
@@ -93,12 +98,16 @@ def _http_code(url: str) -> int | None:
 # маркеры командной строки процессов, поднятых pokafer (см. cmd_stop)
 _CMD_MARKERS = (
     "pokafer bench", "pokafer arena", "pokafer demo",
-    "pokafer table", "pokafer brain", "pokafer eyes", "pokafer.benchmark",
+    "pokafer table", "pokafer brain", "pokafer eyes", "pokafer fight", "pokafer.benchmark",
 )
 _SCRIPT_MARKERS = (
     "serve_table.py", "serve_brain.py",
     "scripts/benchmark.py", "scripts/arena.py", "scripts/replay_offline.py",
     "scripts/eyes_demo.py", "scripts/eyes_view.py", "pokafer.eyes.viewer",
+    "scripts/test_flags_accuracy.py", "scripts/test_tracker_accuracy.py",
+    "scripts/test_window_states.py", "scripts/test_card_accuracy.py",
+    "scripts/test_numbers_accuracy.py", "scripts/test_fight_accuracy.py",
+    "scripts/calibrate_pokafer.py",
 )
 
 

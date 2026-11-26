@@ -24,6 +24,10 @@
   #home p { color:var(--dim); margin-bottom:12px; }
   #home li { margin:6px 0; }
   #home a { color:var(--info); }
+  #tracker { max-width:1280px; margin:0 auto 12px; padding:8px 14px; background:var(--panel);
+    border:1px solid var(--line); border-radius:8px; font:13px/1.6 "Segoe UI", system-ui, sans-serif; }
+  #tracker .dim { color:var(--dim); } #tracker .bad { color:var(--bad); font-weight:600; }
+  #tracker b { color:var(--ok); }
   code { background:var(--panel); padding:1px 6px; border-radius:5px; }
   .legend { display:flex; gap:14px; flex-wrap:wrap; color:var(--dim); font-size:12px; padding:0 16px 8px; }
   .legend i { display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:5px; }
@@ -41,8 +45,10 @@
   <span><i style="background:#4f8fd6"></i>рубашка</span>
   <span><i style="background:#ff5a5a"></i>не распознано</span>
   <span><i style="background:#555f73"></i>пустой слот</span>
+  <span><i style="background:#ffe45e"></i>индикатор горит (ход / D / рука окончена)</span>
 </div>
 <main><canvas id="view" width="1280" height="720" hidden></canvas><div id="home" hidden></div></main>
+<div id="tracker" hidden></div>
 
 <script>
 "use strict";
@@ -52,14 +58,45 @@
 const session = decodeURIComponent(location.pathname.replace(/^\/view\//, "").replace(/\/$/, ""));
 const $ = (id) => document.getElementById(id);
 const wsBase = (location.protocol === "https:" ? "wss://" : "ws://") + location.host;
+const STREET_RU = { preflop:"префлоп", flop:"флоп", turn:"терн", river:"ривер", showdown:"вскрытие" };
+/* что поняли трекер и пилот (state.extra): рука, улица, банк, ход героя, места
+   с их стеками; в бою (x.pilot) — ещё решение мозга и счёт боя */
+function drawTracker(x) {
+  const el = $("tracker");
+  el.hidden = !x;
+  if (!x) return;
+  const seats = (x.seats || []).map((s) => `${s.seat}:${s.name}${s.folded ? " ✕" : ""} ${s.stack}` +
+    (s.bet ? ` (${s.bet})` : "")).join(" · ");
+  const turn = x.phase === "over" ? "рука окончена" : x.hero_turn ? "<b>ход героя</b>" :
+    x.actor == null ? "…" : `ходит место ${x.actor}`;
+  let html = `<b>Трекер</b> · рука ${x.hand} · ${STREET_RU[x.street] || x.street} · банк ${x.pot} · ${turn}` +
+    ` · действий ${x.actions}` + (x.gaps ? ` · <span class="bad">пропусков ${x.gaps}</span>` : "") +
+    (x.exact || x.phase === "over" ? "" : " · история улицы неточна") +
+    `<br><span class="dim">${seats}</span>`;
+  const p = x.pilot;
+  if (p) {
+    const s = p.stats || {}, d = p.last;
+    html += `<br><b>Пилот</b> · ${p.strategy} · рук ${p.hands} · исход ${p.won > 0 ? "+" : ""}${p.won}` +
+      ` · решено ${s["решения"] || 0} · повторов ${s["повторы"] || 0}` +
+      (s["исполнено иначе"] ? ` · <span class="bad">исполнено иначе ${s["исполнено иначе"]}</span>` : "") +
+      (d ? `<br><span class="dim">герой: ${d.action}${d.amount_to != null ? " до " + d.amount_to : ""}` +
+         `${d.reasoning ? " — " + d.reasoning : ""} (${Math.round(d.elapsed_ms)} мс)</span>` : "");
+  }
+  el.innerHTML = html;
+}
 const COLOR = { face:"#3ddc84", back:"#4f8fd6", empty:"#555f73", unknown:"#ff5a5a",
-                number:"#3ddc84", low:"#ffb020", none:"#8a93a6" };
+                number:"#3ddc84", low:"#ffb020", none:"#8a93a6", flag:"#ffe45e", flagOff:"#7c879c" };
+const FLAG_NAME = { "hand.over": "рука окончена" };   // прочие: ход / D — по суффиксу пути
+function flagLabel(path) {
+  if (FLAG_NAME[path]) return FLAG_NAME[path];
+  return path.endsWith(".turn") ? "ход" : path.endsWith(".button") ? "D" : path;
+}
 
 function setStatus(text, cls) { const el = $("status"); el.textContent = text; el.className = cls || ""; }
 
 /* ---------- список сессий ---------- */
 async function home() {
-  $("view").hidden = true; $("legend").hidden = true; $("home").hidden = false;
+  $("view").hidden = true; $("legend").hidden = true; $("home").hidden = false; $("tracker").hidden = true;
   const res = await fetch("/api/sessions").then((r) => r.json()).catch(() => []);
   let html = "<h2 style='margin-bottom:12px'>Открытые столы</h2>";
   if (!res.length) {
@@ -130,6 +167,16 @@ function draw() {
       label("—", x + w + 4, y, COLOR.none, false);
     }
   }
+  // индикаторы (чей ход, дилер, рука окончена): зоны в несколько пикселей — рамка с запасом
+  for (const f of s.flags || []) {
+    const [x, y, w, h] = f.rect;
+    const lit = f.state === "on";
+    ctx.strokeStyle = f.state === "unknown" ? COLOR.unknown : lit ? COLOR.flag : COLOR.flagOff;
+    if (!lit) { ctx.setLineDash([2, 3]); ctx.lineWidth = 1; }
+    ctx.strokeRect(x - 2, y - 2, w + 4, h + 4);
+    ctx.setLineDash([]); ctx.lineWidth = 2;
+    if (lit) label(flagLabel(f.path), x + w / 2 - 8, y + h + 3, COLOR.flag, true);   // под зоной: не по табличке места
+  }
   frames += 1;
   const now = performance.now();
   if (now - fpsT >= 1000) { fps = frames * 1000 / (now - fpsT); frames = 0; fpsT = now; }
@@ -156,6 +203,7 @@ async function onMessage(ev) {
   last = state;
   setStatus("живой кадр", "ok");
   draw();
+  drawTracker(state.extra);
 }
 
 function connect() {

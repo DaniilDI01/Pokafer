@@ -17,7 +17,9 @@
   configure {bots: [...]} — пересобрать стол: список ботов и их стратегии
 
 Сессии именуются клиентом (?sid=...): переподключение/F5 возвращаются к тому
-же столу, а автотесты глаз читают правду СВОЕЙ сессии (GET /debug/state?sid=).
+же столу, а автотесты глаз и трекера читают правду СВОЕЙ сессии:
+GET /debug/state?sid= (вид героя) и GET /debug/hand?sid= (раздача с историей
+действий движка). Рантайм глаз эти адреса не читает — только пиксели кадра.
 """
 from __future__ import annotations
 
@@ -128,12 +130,14 @@ class TableSession:
             self.button = seats_order[(seats_order.index(self.button) + 1) % len(seats_order)]
         else:
             self.button = seats_order[0]
+        # с зерном сессии колода каждой руки воспроизводима (автотесты глаз и трекера)
         self.engine = HandEngine(
             seat_stacks=dict(self.stacks),
             names=self.names,
             button_seat=self.button,
             hand_id=f"web-{self.hand_no:04d}",
             table_id="web-table",
+            seed=None if self._seed is None else f"{self._seed}:{self.hand_no}",
         )
 
     # ---------- вид для клиента ----------
@@ -299,6 +303,18 @@ def create_table_app(default_strategy: str = "heuristic",
         if session is None:
             raise HTTPException(404, f"сессия {sid!r} не найдена")
         return session.view()
+
+    @app.get("/debug/hand")
+    async def debug_hand(sid: str):
+        """Правда раздачи ЦЕЛИКОМ — с историей действий движка (Snapshot с точки зрения героя).
+
+        Так же, как /debug/state: только калибровке и автотестам (сверка
+        восстановленной трекером истории); рантайм глаз его не читает.
+        """
+        session = sessions.get(sid)
+        if session is None:
+            raise HTTPException(404, f"сессия {sid!r} не найдена")
+        return session.engine.snapshot_for(HERO).model_dump()
 
     @app.websocket("/ws/table")
     async def table(ws: WebSocket, strategy: str = default_strategy,

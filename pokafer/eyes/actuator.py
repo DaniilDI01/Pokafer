@@ -44,20 +44,20 @@ class Actuator:
         self.click(f"act.preset_{which}")
         self.click("act.raise")
 
-    def raise_to(self, amount: float, legal_min: float, legal_max: float) -> None:
-        """Точная сумма: клик в поле ввода, выделение, ввод с клавиатуры, рейз.
+    def raise_to(self, amount: float, all_in_to: float) -> None:
+        """Поднять «до» amount: олл-ин — кнопкой пресета, иную сумму — вводом в поле.
 
-        Сумма задаётся трекером (он читает min/max рейза из зоны поля/слайдера).
+        Клик ставит курсор в поле, Ctrl+A выделяет его текущее значение
+        (минимальный рейз), ввод с клавиатуры заменяет. Олл-ин — сумма
+        «до» из легальных действий трекера (их знает пилот); минимальный
+        рейз с экрана не читается.
         """
-        if amount >= legal_max - 1e-9:
+        if amount >= all_in_to - 1e-9:
             self.raise_preset("max")
             return
         vw, vh = self.browser.viewport
         x, y, w, h = self.preset.zone("act.input", (0, 0, vw, vh))
-        cx, cy = x + w // 2, y + h // 2
-        # тройной клик = выделить текущее значение в поле
-        self.browser.click_at(cx, cy, self.park)
-        self.browser.click_at(cx, cy, self.park)
-        self.browser.click_at(cx, cy, self.park)
+        self.browser.click_at(x + w // 2, y + h // 2, self.park)
+        self.browser.select_all()
         self.browser.type_text(str(round(amount, 2)))
         self.click("act.raise")

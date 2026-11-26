@@ -10,6 +10,16 @@ from dataclasses import dataclass
 
 from pokafer.core.schema import Snapshot
 
+CENT = 1e-9   # страховка округления до копейки: сумма на полкопейки (60.945) в плавающей точке
+              # оказывается то выше, то ниже середины — смотря как её суммировали; движок и трекер
+              # (он читает банк с экрана строкой) получали 60.94 и 60.95 (найдено приёмкой боя)
+
+
+def _cents(amount: float) -> float:
+    """Сумма в копейках: округление не зависит от пути вычисления."""
+    return round(amount + CENT, 2)
+
+
 
 @dataclass(frozen=True)
 class LegalAction:
@@ -61,7 +71,7 @@ def legal_actions(snap: Snapshot) -> list[LegalAction]:
             ]
         seen: list[float] = []
         for amt in sorted(raw):
-            amt = round(min(max(amt, min_raise_to), my_all_in_to), 2)
+            amt = _cents(min(max(amt, min_raise_to), my_all_in_to))
             if amt <= max_bet + 1e-9:
                 continue
             if not seen or all(abs(amt - x) > max(0.01, amt * 0.02) for x in seen):
@@ -71,7 +81,7 @@ def legal_actions(snap: Snapshot) -> list[LegalAction]:
         if my_all_in_to > max_bet + 1e-9 and (
             not seen or my_all_in_to > seen[-1] + 1e-9
         ):
-            out.append(LegalAction(verb, round(my_all_in_to, 2)))
+            out.append(LegalAction(verb, _cents(my_all_in_to)))
     return out
 
 

@@ -19,7 +19,7 @@ import random
 import time
 import urllib.request
 import uuid
-from collections import Counter
+from collections import Counter, defaultdict
 from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -29,10 +29,13 @@ from PIL import Image, ImageChops
 from pokafer.eyes.browser import TableBrowser
 from pokafer.eyes.capture import ScreenCapture, WindowHidden
 from pokafer.eyes.sites import Preset
+from pokafer.eyes.table_setup import SEAT_BOTS_JS, STATUS_JS
 
 if TYPE_CHECKING:  # читатели — только для подписей; сама правда от них не зависит
     from pokafer.eyes.cards import Reading
+    from pokafer.eyes.flags import FlagReading
     from pokafer.eyes.numbers import NumberReading
+    from pokafer.eyes.tracker import Tracker
 
 HERO_SEAT = 1
 
@@ -45,17 +48,28 @@ DOM_CARDS_JS = """
     const labels = (sel) => [...document.querySelectorAll(sel)].map(cardOf);
     const out = {hero: labels('.seat.hero .cards .card'), board: labels('#board .card')};
     for (const s of document.querySelectorAll('.seat.villain')) {
-      const pos = [...s.classList].find((c) => c.startsWith('pos-'));
-      out[pos.replace('pos-', 'pos_')] = labels('.seat.' + pos + ' .cards .card');
+        const pos = [...s.classList].find((c) => c.startsWith('pos-'));
+        out[pos.replace('pos-', 'pos_')] = labels('.seat.' + pos + ' .cards .card');
     }
     return out;
 """
 
-DOM_STATUS_JS = "return document.getElementById('status').textContent;"
+DOM_STATUS_JS = STATUS_JS
 
 DOM_ACT_JS = """
 document.getElementById({next: 'nextHandFloat', call: 'checkCallBtn',
-                        raise: 'raiseBtn'}[arguments[0]]).click();
+                        raise: 'raiseBtn', fold: 'foldBtn'}[arguments[0]]).click();
+"""
+
+# что страница показывает «горящим» сейчас: ход, значок дилера, кнопка следующей руки
+DOM_FLAGS_JS = """
+const num = (el) => el.dataset.seat ? +el.dataset.seat : 1;
+const active = [...document.querySelectorAll('.seat.active')].map(num);
+const marked = [...document.querySelectorAll('.seat')].filter((el) => {
+  const m = el.querySelector('.button-mark'); return m && m.classList.contains('on');
+}).map(num);
+return {to_act: active.length === 1 ? active[0] : (active.length ? active : null), button: marked,
+        over: !document.getElementById('nextHandFloat').disabled};
 """
 
 # инъекции «по месту»: те же элементы, те же позиции, что в игре
@@ -97,7 +111,7 @@ return out;
 """
 
 
-def _key(truth: dict) -> tuple:
+def state_key(truth: dict) -> tuple:
     """Состояние, меняющееся после ЛЮБОГО действия героя.
 
     Кроме номера руки, борда и номера ходящего — банк и деньги на столе.
@@ -116,6 +130,13 @@ def _key(truth: dict) -> tuple:
 def is_frozen(truth: dict) -> bool:
     """Сервер не меняет состояние, пока герой не сходил."""
     return bool(truth) and (bool(truth.get("hand_over")) or truth.get("to_act") == HERO_SEAT)
+
+
+def _shown_flags(truth: dict) -> dict:
+    """Что страница обязана показывать «горящим» для этого состояния (сравнение с DOM_FLAGS_JS)."""
+    over = bool(truth.get("hand_over"))
+    return {"to_act": None if over else truth.get("to_act"),
+            "button": [truth.get("button_seat")], "over": over}
 
 
 def expected_cards(truth: dict, preset: Preset) -> dict[str, str | None]:
@@ -211,6 +232,203 @@ def number_ok(want: str | None, reading: NumberReading) -> bool:
     return reading.state == "number" and reading.value == float(want)
 
 
+def _seat_number(owner: str, layout: list[str], bots: list[dict]) -> int | None:
+    """Номер места движка, которое сидит на месте owner ('hero' или 'seat.pos_tl')."""
+    if owner == "hero":
+        return HERO_SEAT
+    return (_seat_bot(owner, layout, bots) or {}).get("seat")
+
+
+def expected_flags(truth: dict, paths, seat_layouts: list[list[str]]) -> dict[str, bool]:
+    """Индикатор -> горит ли он по правде: чей ход, значок дилера, рука окончена.
+
+    paths — индикаторы пресета ('hero.turn', 'seat.pos_tl.button', 'hand.over');
+    раскладка мест — meta.seat_layouts пресета.
+    """
+    over = bool(truth.get("hand_over"))
+    to_act = None if over else truth.get("to_act")
+    button = truth.get("button_seat")
+    bots = truth.get("bots") or []
+    layout = seat_layouts[len(bots) - 1] if 0 < len(bots) <= len(seat_layouts) else []
+    out: dict[str, bool] = {}
+    for path in paths:
+        owner, _, kind = path.rpartition(".")
+        if kind == "turn":
+            out[path] = to_act is not None and _seat_number(owner, layout, bots) == to_act
+        elif kind == "button":
+            out[path] = button is not None and _seat_number(owner, layout, bots) == button
+        elif kind == "over" and owner == "hand":
+            out[path] = over
+        else:
+            raise KeyError(f"неизвестный индикатор {path!r}")
+    return out
+
+
+def flag_ok(want: bool, reading: FlagReading) -> bool:
+    """Верно ли прочитан индикатор: want — горит ли он по правде."""
+    return reading.state == ("on" if want else "off")
+
+
+def records(actions) -> list[tuple]:
+    """Действия в сравнимый вид: (порядок, улица, место, тип, «до», сколько добавлено).
+
+    Принимает и записи трекера (ActionRecord), и движка (словари из /debug/hand).
+    """
+    def get(a, name):
+        return a.get(name) if isinstance(a, dict) else getattr(a, name)
+    return [(get(a, "order"), get(a, "street"), get(a, "seat"), get(a, "type"), get(a, "amount_to"),
+             round(get(a, "amount"), 4)) for a in actions]
+
+
+def _paid(records_: list[tuple]) -> dict:
+    """Сколько каждое место внесло по этим действиям."""
+    out: dict[int, float] = {}
+    for record in records_:
+        out[record[2]] = round(out.get(record[2], 0.0) + record[5], 4)
+    return out
+
+
+def _uncalled_raise(mine: list[tuple], truth: list[tuple]) -> bool:
+    """Истории совпадают, кроме «рейзов, которые некому было назвать».
+
+    Движок разрешает повышать, даже когда все остальные в олл-ине; непокрытая
+    часть такого рейза возвращается, и по кадрам он неотличим от колла —
+    трекер записывает колл. Рейз «пустой», если на этой улице никто больше не
+    внёс сверх суммы колла.
+    """
+    if len(mine) != len(truth):
+        return False
+    for m, t in zip(mine, truth):
+        if m == t:
+            continue
+        _, street, seat, kind, to, _ = m
+        if kind != "call" or t[1:4] != (street, seat, "raise"):
+            return False
+        matched = max((round(sum(o[5] for o in truth if o[1] == street and o[2] == other), 4)
+                       for other in {o[2] for o in truth} if other != seat), default=0.0)
+        if matched > to + 1e-6:                  # рейз всё-таки называли
+            return False
+    return True
+
+
+def history_verdict(mine, truth, gaps: int) -> str:
+    """Как восстановленная трекером история соотносится с историей движка.
+
+      точно         — действие в действие;
+      пропуск       — трекер сам пометил, что интервал не восстановился (gaps > 0);
+      эквивалент    — то же самое, кроме «рейза, который некому было назвать»
+                      (см. _uncalled_raise);
+      иной рассказ  — другое объяснение с теми же вложениями каждого места;
+      выдумано      — вложения не совпадают: так бывает только при ошибке.
+
+    mine и truth — списки из records().
+    """
+    if mine == truth:
+        return "точно"
+    if gaps:
+        return "пропуск"
+    if _uncalled_raise(mine, truth):
+        return "эквивалент"
+    return "иной рассказ" if _paid(mine) == _paid(truth) else "выдумано"
+
+
+LEVEL = "уровень"          # всё видимое: обязано совпадать всегда
+HISTORY = "история"        # действия: точно (см. history_verdict: эквивалент, иной рассказ, пропуск, выдумано)
+
+
+def compare_hand(tracker: Tracker, hand: dict, view: dict) -> tuple[list[str], str]:
+    """Срез трекера против правды: (что не сошлось в уровне, вердикт по истории).
+
+    hand — раздача движка целиком (TableTruthFeed.hand), view — вид героя
+    (TableTruthFeed.truth); оба — того же состояния, что и срез трекера.
+    """
+    snap = tracker.snapshot.model_dump()
+    over = view["hand_over"]
+    errors: list[str] = []
+
+    def same(name: str, mine, want) -> None:
+        if mine != want:
+            errors.append(f"{name}: правда {want!r}, у трекера {mine!r}")
+
+    same("борд", snap["board"], hand["board"])
+    same("улица", snap["street"], hand["street"])
+    same("дилер", snap["button_seat"], hand["button_seat"])
+    same("банк", snap["pot"], round(float(view["pot"]), 2))
+    same("ход героя", tracker.hero_turn, view["to_act"] == HERO_SEAT and not over)
+
+    def seat(s: dict, keep: bool) -> tuple:
+        return (s["seat"], round(s["stack"], 2), round(s["bet_street"], 2),
+                round(s["invested"], 2) if keep else 0, s["folded"], s["all_in"])
+
+    keep = tracker.from_start                  # история началась не с раздачи карт: вложения неполны
+    same("места", [seat(s, keep) for s in snap["seats"]], [seat(s, keep) for s in hand["seats"]])
+    if tracker.from_start:                     # рука, не виденная с раздачи: карты героя могут быть неизвестны
+        same("карты героя", snap["seats"][0]["hole_cards"], hand["seats"][0]["hole_cards"])
+
+    return errors, history_verdict(records(snap["actions"]), records(hand["actions"]), tracker.hand.gaps)
+
+
+class Judge:
+    """Счёт сверки с движком: каждое состояние, принятоное трекером, — ровно один раз.
+
+    Приёмки трекера и боя (scripts/test_*_accuracy.py) зовут judge в тот
+    кадр, когда трекер принял состояние (Tracker.serial вырос), и только
+    если стол не ушёл с него: иначе сверялись бы разные моменты. Сводка и
+    критерий — report и passed.
+    """
+
+    def __init__(self) -> None:
+        self.stat: dict = defaultdict(lambda: [0, 0])   # разрез -> [верно, всего]
+        self.fails: list[str] = []
+        self.confirmed = 0                              # состояний сверено
+
+    def judge_live(self, feed: "TableTruthFeed", tracker: Tracker, truth: dict) -> tuple[list[str], str] | None:
+        """Сверить состояние, принятое трекером сейчас, с движком живого стола.
+
+        Правда читается, пока стол может уйти вперёд (ходят боты): рука — у
+        движка, затем правда сверяется с прочитанной до кадра. Ушёл — срез
+        не судим (None): сверялись бы разные моменты. На ходе героя стол
+        заморожен — там зовут judge напрямую.
+        """
+        hand = feed.hand()
+        if state_key(feed.truth()) != state_key(truth):
+            return None
+        return self.judge(tracker, hand, truth)
+
+    def judge(self, tracker: Tracker, hand: dict, view: dict) -> tuple[list[str], str]:
+        if tracker.hand is None:                        # стол встречен между раздачами: сверять нечего
+            return [], ""
+        self.confirmed += 1
+        errors, verdict = compare_hand(tracker, hand, view)
+        for name, ok in (("срезы", not errors), (LEVEL, not errors), (HISTORY, verdict == "точно")):
+            self.stat[name][1] += 1
+            self.stat[name][0] += ok
+        self.stat[(HISTORY, verdict)][1] += 1
+        if len(self.fails) < 15:
+            if verdict == "выдумано":
+                self.fails.append(f"рука {view['hand_no']}: история выдумана — трекер "
+                                  f"{records(tracker.snapshot.actions)}, движок {records(hand['actions'])}")
+            if errors:
+                self.fails.append(f"рука {view['hand_no']}: " + "; ".join(errors))
+        return errors, verdict
+
+    def report(self) -> list[str]:
+        """Строки сводки: уровень, история по вердиктам, примеры расхождений."""
+        lines = []
+        for name in (LEVEL, HISTORY):
+            ok, n = self.stat[name]
+            lines.append(f"  {name:9} {ok:5}/{n:<5} {ok / n:.2%}" if n else f"  {name}: нет")
+        for (_, verdict), (_, n) in sorted((k, v) for k, v in self.stat.items() if isinstance(k, tuple)):
+            lines.append(f"    история: {verdict:14} {n:4}")
+        return lines + (["примеры расхождений:"] + [f"   {line}" for line in self.fails] if self.fails else [])
+
+    @property
+    def passed(self) -> bool:
+        """Уровень — ни одного расхождения; история — ни одного выдуманного действия."""
+        total = self.stat["срезы"][1]
+        return bool(total) and self.stat[LEVEL][0] == total and self.stat[(HISTORY, "выдумано")][1] == 0
+
+
 Rect = tuple[int, int, int, int]
 
 
@@ -257,14 +475,17 @@ def measure_number_zones(feed: "TableTruthFeed", seats: list[str]) -> dict[str, 
                 math.ceil(text[1] + text[3] - 1e-6) - top + 1)
 
     pot = one["pot.amt"]                      # поле числа: подпись «Банк: » — не оно
-    zones = {"hero.stack": line(one["hero.amt"], one["hero.plate"][0] + one["hero.plate"][2] + 8),
+    # зона стека кончается краем таблички: за ним сукно, а на вскрытии — карта
+    # места. Запас в 8 px за краем попадал в зону чтения, и одиночный «0» стека
+    # олл-ина в широкой зоне модель читала как «。」 (найдено в бою)
+    zones = {"hero.stack": line(one["hero.amt"], one["hero.plate"][0] + one["hero.plate"][2]),
              "act.call_amount": line(one["act.call_amount"],
                                      one["act.call_amount"][0] + one["act.call_amount"][2] + 1)}
     zones["hero.bet"] = _chip(one["hero.bet"])
     zones["pot.amount"] = line(pot, one["pot.box"][0] + one["pot.box"][2])
     for pos in seats:
         amt, plate = one[f"seat.{pos}.amt"], one[f"seat.{pos}.plate"]
-        zones[f"seat.{pos}.stack"] = line(amt, plate[0] + plate[2] + 8)
+        zones[f"seat.{pos}.stack"] = line(amt, plate[0] + plate[2])
         zones[f"seat.{pos}.bet"] = _chip(one[f"seat.{pos}.bet"])
     for path, (x, y, w, h) in zones.items():
         if w < 8 or h < 8:
@@ -304,6 +525,7 @@ def _seat_bot(owner: str, layout: list[str], bots: list[dict]) -> dict | None:
 class TruthFrame:
     truth: dict
     image: Image.Image
+    hand: dict | None = None     # раздача с историей действий движка (только у samples)
 
     @property
     def hand_no(self) -> int:
@@ -318,12 +540,13 @@ class TableTruthFeed:
     """Живой стол с правдой: замороженные кадры + DOM-инъекции калибровки."""
 
     def __init__(self, url: str, viewport: tuple[int, int] = (1280, 720),
-                 bots: int = 5, headless: bool = True, raise_prob: float = 0.0,
-                 screen: bool = False):
+                 bots: int = 5, strategy: str = "heuristic", headless: bool = True, raise_prob: float = 0.0,
+                 screen: bool = False, fold_prob: float = 0.0):
         self.base = url.rstrip("/")
         self.sid = uuid.uuid4().hex[:10]
         self.viewport = viewport
         self.raise_prob = raise_prob
+        self.fold_prob = fold_prob
         # screen=True — кадры с ЭКРАНА (запасной путь: mss поверх видимого
         # окна), а не пиксели страницы от браузера; окно находится на экране
         # при первом кадре и должно оставаться видно целиком
@@ -333,17 +556,7 @@ class TableTruthFeed:
         self.browser = TableBrowser(f"{self.base}/?sid={self.sid}",
                                     viewport=viewport, headless=headless)
         self._wait_ready()
-        for attempt in range(3):
-            missing = bots - len(self.truth().get("bots") or [])
-            for _ in range(max(missing, 0)):
-                self.browser.execute(DOM_ADD_BOT_JS)
-                time.sleep(0.05)
-            if len(self.truth().get("bots") or []) >= bots:
-                break
-            time.sleep(0.3)
-        if len(self.truth().get("bots") or []) != bots:
-            self.close()
-            raise RuntimeError(f"не удалось посадить {bots} ботов")
+        self._seat_bots(bots, strategy)
 
     # ---------- правда ----------
 
@@ -424,13 +637,15 @@ class TableTruthFeed:
     # ---------- игра за героя (DOM-клики: только калибровка/тест) ----------
 
     def act(self, truth: dict) -> str:
-        """Ровно одно действие по правде: новая рука / колл-чек / изредка рейз."""
+        """Ровно одно действие по правде: новая рука / колл-чек / изредка рейз или фолд."""
         if truth.get("hand_over"):
             self.browser.execute(DOM_ACT_JS, "next")
             return "next"
         legal = truth.get("legal") or {}
-        can_raise = bool(legal.get("raise"))
-        if can_raise and random.random() < self.raise_prob:
+        if legal.get("fold") and random.random() < self.fold_prob:
+            self.browser.execute(DOM_ACT_JS, "fold")
+            return "fold"
+        if legal.get("raise") and random.random() < self.raise_prob:
             self.browser.execute(DOM_ACT_JS, "raise")
             return "raise"
         self.browser.execute(DOM_ACT_JS, "call")  # кнопка «Чек/Колл»
@@ -441,6 +656,9 @@ class TableTruthFeed:
             self.act(truth)
             if self.accepted(truth):
                 return True
+            status = self.browser.execute(DOM_STATUS_JS)
+            if status.startswith("JS-ошибка"):        # страница сломалась в игре: не молчать
+                raise RuntimeError(f"страница стола упала с ошибкой: {status}")
             self.anomalies["act_lost"] += 1
         return False
 
@@ -452,7 +670,7 @@ class TableTruthFeed:
         """
         end = time.time() + timeout
         while time.time() < end:
-            if _key(self.truth()) != _key(truth):
+            if state_key(self.truth()) != state_key(truth):
                 return True
             time.sleep(0.02)
         return False
@@ -472,6 +690,53 @@ class TableTruthFeed:
             if time.time() >= end:
                 return
             if not self.act_and_confirm(truth):
+                print(f"правда: стол не принимает действия героя (статус "
+                      f"{self.browser.execute(DOM_STATUS_JS)!r}) — останавливаюсь")
+                return
+
+    def hand(self) -> dict:
+        """Раздача с историей действий движка (GET /debug/hand): срез мозга с точки зрения героя."""
+        with urllib.request.urlopen(f"{self.base}/debug/hand?sid={self.sid}", timeout=3) as r:
+            return json.loads(r.read())
+
+    def synced_truth(self, timeout: float = 3.0) -> dict | None:
+        """Правда, которую страница УЖЕ показывает (ход, дилер, кнопка следующей руки).
+
+        Читается заново на каждой попытке: пока стол играет, состояние уходит
+        вперёд, и сверка с устаревшей правдой ждала бы до тайм-аута.
+        """
+        end = time.time() + timeout
+        while time.time() < end:
+            truth = self.truth()
+            if self.browser.execute(DOM_FLAGS_JS) == _shown_flags(truth):
+                return truth
+            time.sleep(0.02)
+        self.anomalies["dom_flags_lag"] += 1
+        return None
+
+    def samples(self, seconds: float) -> Iterator[TruthFrame]:
+        """Кадры ЖИВОЙ игры — и ходы ботов, и итог руки — с правдой того же мгновения.
+
+        Замороженные кадры (.frames) не видят ходов ботов, а индикаторам и
+        трекеру нужны все состояния. Пара «кадр <-> правда» честна, пока
+        состояние не менялось: страница догнала сервер (synced_truth), краска
+        устоялась, правда ДО и ПОСЛЕ съёмки совпала (state_key). Снятое замороженное
+        состояние герой закрывает одним действием, и игра идёт дальше; не
+        снятое — снимается в следующем круге, а не пропускается.
+        """
+        end = time.time() + seconds
+        while time.time() < end:
+            truth = self.synced_truth()
+            if truth is None:
+                continue
+            image = self.settled()
+            if image is None:
+                continue
+            hand = self.hand()                       # пока состояние то же — правда та же
+            if state_key(self.truth()) != state_key(truth):
+                continue
+            yield TruthFrame(truth, image, hand)
+            if is_frozen(truth) and not self.act_and_confirm(truth):
                 print(f"правда: стол не принимает действия героя (статус "
                       f"{self.browser.execute(DOM_STATUS_JS)!r}) — останавливаюсь")
                 return
@@ -506,13 +771,40 @@ class TableTruthFeed:
 
     # ---------- служебное ----------
 
+    def _seat_bots(self, bots: int, strategy: str = "heuristic", timeout: float = 15.0) -> None:
+        """Посадить ботов и дождаться, пока сервер их примет.
+
+        Сервер читает следующую команду клиента, только доиграв ходы ботов
+        (пауза bot_think на каждый): при 0.5 с пересборка стола запаздывает
+        на секунды. Стандартные боты (heuristic) сажаются кнопкой «+ бот»:
+        клиент не шлёт больше пяти — лишние клики не мешают. Иная стратегия —
+        стол пересобирается одной командой (table_setup.SEAT_BOTS_JS).
+        """
+        end = time.time() + timeout
+        if strategy != "heuristic":
+            self.browser.execute(SEAT_BOTS_JS, bots, strategy)
+        while time.time() < end:
+            seated = self.truth().get("bots") or []
+            if len(seated) >= bots and all(b.get("strategy") == strategy for b in seated):
+                return
+            if strategy == "heuristic" and self.browser.execute("return botsCfg.length;") < bots:
+                self.browser.execute(DOM_ADD_BOT_JS)
+            time.sleep(0.1)
+        self.close()
+        raise RuntimeError(f"не удалось посадить {bots} ботов ({strategy})")
+
     def _wait_ready(self, timeout: float = 10.0) -> None:
         end = time.time() + timeout
         while time.time() < end:
             try:
                 status = self.browser.execute(DOM_STATUS_JS)
+                if status.startswith("JS-ошибка"):   # страница жива, но сломана: клики тихо терялись бы
+                    self.close()
+                    raise RuntimeError(f"страница стола упала с ошибкой: {status}")
                 if status != "подключение…" and self.truth().get("hand_no"):
                     return
+            except RuntimeError:
+                raise
             except Exception:  # страница ещё грузится / сессии ещё нет
                 pass
             time.sleep(0.1)
